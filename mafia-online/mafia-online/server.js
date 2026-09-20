@@ -147,7 +147,7 @@ function visibleRole(room, viewer, q) {
 function view(room, p) {
   const inGame = room.phase !== 'lobby';
   const v = {
-    now: now(), code: room.code, phase: room.phase, phaseStart: room.phaseStart, phaseEnd: room.phaseEnd, night: room.night,
+    now: now(), game: room.gameNo || 0, code: room.code, phase: room.phase, phaseStart: room.phaseStart, phaseEnd: room.phaseEnd, night: room.night,
     settings: room.settings, hostId: room.hostId, meId: p.id, minPlayers: MIN_PLAYERS, maxPlayers: MAX_PLAYERS, highMs: HIGH_MS,
     players: room.order.map(id => {
       const q = room.players.get(id);
@@ -230,6 +230,7 @@ function startGame(room) {
   const seated = [...room.players.values()].filter(p => !p.left);
   const roles = composeRoles(seated.length, room.settings);
   seated.forEach((p, i) => { p.role = roles[i]; p.alive = true; p.bullets = p.role === 'vigilante' ? 1 : 0; p.det = []; });
+  room.gameNo = (room.gameNo || 0) + 1;
   room.night = 0; room.log = []; room.winner = null; room.jesterWin = null; room.dawn = null; room.result = null;
   sys(room, 'The roles have been dealt. Check yours.');
   setPhase(room, 'reveal', T(12));
