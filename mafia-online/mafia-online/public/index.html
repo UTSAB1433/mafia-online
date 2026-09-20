@@ -43,7 +43,7 @@ button,input,select{font-family:inherit;color:inherit}
 .app{max-width:1080px;margin:0 auto;padding:12px 18px 56px}
 .narrow{max-width:560px;margin:0 auto}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
-
+ 
 .h1{font-family:var(--display);font-weight:400;font-size:clamp(40px,12vw,60px);line-height:1.02;margin:0}
 .h2{font-family:var(--display);font-weight:400;font-size:clamp(28px,7.5vw,38px);line-height:1.08;margin:0 0 6px}
 .h3{font-size:17px;font-weight:700;margin:0 0 4px}
@@ -55,7 +55,7 @@ button,input,select{font-family:inherit;color:inherit}
 .lede{font-size:18px;max-width:38ch}
 .brand{font-family:var(--display);font-size:22px;letter-spacing:.06em}
 .top{display:flex;align-items:center;justify-content:space-between;padding:6px 0 16px}
-
+ 
 .btn{appearance:none;display:block;width:100%;background:var(--surface);border:2px solid var(--edge);border-radius:10px;padding:14px 18px;min-height:52px;font-size:17px;font-weight:700;cursor:pointer;box-shadow:0 3px 0 var(--edge);transition:transform .08s,box-shadow .08s;text-align:center}
 .btn:active{transform:translateY(3px);box-shadow:0 0 0 var(--edge)}
 .btn.primary{background:var(--accent);color:var(--accent-ink)}
@@ -88,7 +88,7 @@ select{font-size:16px;padding:8px 10px;min-height:44px;border:2px solid var(--ed
 .divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--line)}
 .feat{margin:0;padding:0;list-style:none;display:grid;gap:8px}
 .feat li{display:flex;gap:10px;align-items:flex-start}
-
+ 
 /* room */
 .rtop{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 0 14px}
 .rtop .grow{flex:1}
@@ -169,7 +169,7 @@ const store = {
   del(k) { try { localStorage.removeItem(k); } catch (e) {} }
 };
 const isM = r => r === 'mafia' || r === 'godfather';
-
+ 
 const ROLES = {
   villager:     { name: 'Villager',      icon: '🏘️', team: 'Town',        blurb: 'No special ability. Your weapons are discussion, logic and your vote.' },
   mafia:        { name: 'Mafia',         icon: '🕶️', team: 'Mafia',       blurb: 'Each night your team chooses a victim, and you can talk to your team at night. By day, blend in.' },
@@ -198,7 +198,7 @@ const WIN = {
   draw:   { icon: '🌫️', title: 'No survivors', text: 'Everyone is gone. Nobody wins.' }
 };
 const PHASE_LABEL = { lobby: 'Lobby', reveal: 'Your role', night: 'Night', dawn: 'Dawn', day: 'Day', vote: 'Vote', result: 'Verdict', over: 'Game over' };
-
+ 
 /* ---------- state ---------- */
 let cfg = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 let session = null;          // {code,pid,token}
@@ -208,7 +208,7 @@ let offset = 0;              // serverNow - clientNow
 let es = null;
 const ui = { name: '', gender: 'neutral', inviteCode: null, online: true, myPing: null, micOn: false, ttsOn: true, narratorOn: true,
              detPick: null, pendingSel: null, phaseKey: '', mainSig: '', audioBlocked: false, homeErr: '' };
-
+ 
 /* =====================================================================================
  * TEXT-TO-SPEECH: chat is read aloud in a male / female / neutral voice, chosen at join
  * ===================================================================================== */
@@ -249,7 +249,7 @@ document.addEventListener('pointerdown', () => {            // browsers need a u
   if (TTS.ok && !ui.ttsPrimed) { ui.ttsPrimed = true; try { speechSynthesis.speak(new SpeechSynthesisUtterance(' ')); } catch (e) {} }
   ensureCtx(); resumeAudio();
 }, { passive: true });
-
+ 
 /* =====================================================================================
  * VOICE CHAT: WebRTC mesh. The server says who you may talk to / hear right now.
  * Night: only the Mafia hear each other. Day: living players. Ghosts: only ghosts speak to ghosts.
@@ -308,9 +308,12 @@ function sendSignal(to, data) { api('signal', { to, data }, { quiet: true, retry
 function makePeer(id, opts) {
   opts = opts || {};
   const pc = new RTCPeerConnection({ iceServers: cfg.iceServers });
-  const tr = pc.addTransceiver('audio', { direction: 'sendrecv' });
+  const initiator = st.meId < id;
+  // Only the side that makes the offer creates a send/receive slot. The answering side gets its slot from the
+  // offer itself (browsers do not reuse a slot made with addTransceiver when answering), see onSignal.
+  const tr = initiator ? pc.addTransceiver('audio', { direction: 'sendrecv' }) : null;
   const audio = new Audio(); audio.autoplay = true; audio.playsInline = true;
-  const e = { id, pc, tr, audio, pending: [], initiator: st.meId < id, sending: 0, resetTimer: null };
+  const e = { id, pc, tr, audio, pending: [], initiator, sending: 0, resetTimer: null };
   peers.set(id, e);
   pc.onicecandidate = ev => { if (ev.candidate) sendSignal(id, { ice: ev.candidate }); };
   pc.ontrack = ev => {
@@ -353,6 +356,8 @@ async function onSignal(msg) {
         if (e && (['failed', 'closed', 'disconnected'].includes(e.pc.connectionState) || e.pc.signalingState !== 'stable')) { closePeer(from); e = null; }
         if (!e) e = makePeer(from, { noOffer: true });
         await e.pc.setRemoteDescription(d.sdp);
+        if (!e.tr) e.tr = e.pc.getTransceivers().find(t => t.receiver && t.direction !== 'stopped') || null;
+        if (e.tr) e.tr.direction = 'sendrecv';          // answer as send+receive so our voice goes back to the offerer
         for (const c of e.pending.splice(0)) await e.pc.addIceCandidate(c).catch(() => {});
         const a = await e.pc.createAnswer(); await e.pc.setLocalDescription(a);
         sendSignal(from, { sdp: e.pc.localDescription });
@@ -379,11 +384,11 @@ function applyVoice() {
   for (const e of peers.values()) {
     const track = (ui.micOn && voice.track && to.has(e.id)) ? voice.track : null;
     const flag = track ? 1 : 0;
-    if (e.sending !== flag) { e.tr.sender.replaceTrack(track).catch(() => {}); e.sending = flag; }
+    if (e.tr && e.sending !== flag) { e.tr.sender.replaceTrack(track).catch(() => {}); e.sending = flag; }
     e.audio.muted = !from.has(e.id);
   }
 }
-
+ 
 /* =====================================================================================
  * NETWORK: SSE in, JSON POST out. Heartbeat measures ping. Nothing here ever gives up on you.
  * ===================================================================================== */
@@ -440,7 +445,7 @@ function sessionOver(msg) {
   ui.inviteCode = null; ui.homeErr = msg || '';
   renderHome();
 }
-
+ 
 /* =====================================================================================
  * SMALL UI HELPERS
  * ===================================================================================== */
@@ -459,7 +464,7 @@ function summarizeRoles(n, s) {
   const c = {}; list.slice(0, n).forEach(r => c[r] = (c[r] || 0) + 1);
   return Object.entries(c).map(([r, k]) => `${k} ${ROLES[r].name}${k > 1 ? (r === 'mafia' ? '' : 's') : ''}`).join(', ');
 }
-
+ 
 /* =====================================================================================
  * HOME: name + voice first, then create or join
  * ===================================================================================== */
@@ -519,7 +524,7 @@ async function enter(path, body) {
     enterRoom();
   } catch (e) { const el = $('#homeErr'); if (el) el.textContent = 'Could not reach the server.'; }
 }
-
+ 
 /* =====================================================================================
  * ROOM
  * ===================================================================================== */
@@ -618,7 +623,7 @@ function paintPings() {
     el.textContent = txt; el.className = cls;
   }
 }
-
+ 
 /* ---------- main panel ---------- */
 function connectedCount() { return st.players.filter(p => p.connected).length; }
 function renderMain(force) {
@@ -743,7 +748,7 @@ function renderNotes() {
   const det = st.you.det || [];
   el.innerHTML = det.length ? `<div class="panel"><p class="note">Your investigations</p>${det.map(d => `<div class="rosterrow"><span>Night ${d.night}: ${esc(nameOf(d.target))}</span><span class="verdict ${d.mafia ? 'bad' : 'good'}">${d.mafia ? 'MAFIA' : 'NOT MAFIA'}</span></div>`).join('')}</div>` : '';
 }
-
+ 
 /* ---------- players ("the table") ---------- */
 function targetInfo() {
   const none = { ids: new Set(), selected: null };
@@ -789,7 +794,7 @@ function onPlayerClick(id) {
     ui.pendingSel = id; renderPlayers(); api('vote', { target: id });
   }
 }
-
+ 
 /* ---------- voice + audio panel ---------- */
 function voiceLine() {
   const ph = st.phase, alive = st.you.alive;
@@ -812,7 +817,7 @@ function renderAudio() {
     ${ui.audioBlocked ? '<button class="btn quiet" data-a="unblock" style="margin-top:10px">Tap to hear other players</button>' : ''}
     ${TTS.ok ? swRow('tts', 'Read chat aloud', 'Typed messages are spoken in the sender’s chosen voice.', ui.ttsOn) + swRow('narr', 'Narrator', 'The game announces nights, deaths and votes.', ui.narratorOn) : ''}</div>`;
 }
-
+ 
 /* ---------- chat ---------- */
 function renderChatMeta() {
   const lab = $('#chLabel'), inp = $('#chatInput'), btn = $('#chatForm button'); if (!lab) return;
@@ -839,7 +844,7 @@ function addMsg(m, live) {
   if (near || !live) box.scrollTop = box.scrollHeight;
   if (live && m.ch !== 'sys' && ui.ttsOn && st && m.from !== st.meId) speak(`${m.name} says: ${m.text}`, m.gender);
 }
-
+ 
 /* =====================================================================================
  * EVENTS
  * ===================================================================================== */
@@ -896,7 +901,7 @@ document.addEventListener('change', e => {
   const k = e.target.dataset && e.target.dataset.s;
   if (k) api('settings', { settings: { [k]: +e.target.value } });
 });
-
+ 
 /* =====================================================================================
  * BOOT
  * ===================================================================================== */
