@@ -308,9 +308,12 @@ function sendSignal(to, data) { api('signal', { to, data }, { quiet: true, retry
 function makePeer(id, opts) {
   opts = opts || {};
   const pc = new RTCPeerConnection({ iceServers: cfg.iceServers });
-  const tr = pc.addTransceiver('audio', { direction: 'sendrecv' });
+  const initiator = st.meId < id;
+  // Only the side that makes the offer creates a send/receive slot. The answering side gets its slot from the
+  // offer itself (browsers do not reuse a slot made with addTransceiver when answering), see onSignal.
+  const tr = initiator ? pc.addTransceiver('audio', { direction: 'sendrecv' }) : null;
   const audio = new Audio(); audio.autoplay = true; audio.playsInline = true;
-  const e = { id, pc, tr, audio, pending: [], initiator: st.meId < id, sending: 0, resetTimer: null };
+  const e = { id, pc, tr, audio, pending: [], initiator, sending: 0, resetTimer: null, born: Date.now() };
   peers.set(id, e);
   pc.onicecandidate = ev => { if (ev.candidate) sendSignal(id, { ice: ev.candidate }); };
   pc.ontrack = ev => {
@@ -353,6 +356,8 @@ async function onSignal(msg) {
         if (e && (['failed', 'closed', 'disconnected'].includes(e.pc.connectionState) || e.pc.signalingState !== 'stable')) { closePeer(from); e = null; }
         if (!e) e = makePeer(from, { noOffer: true });
         await e.pc.setRemoteDescription(d.sdp);
+        if (!e.tr) e.tr = e.pc.getTransceivers().find(t => t.receiver && t.direction !== 'stopped') || null;
+        if (e.tr) e.tr.direction = 'sendrecv';          // answer as send+receive so our voice goes back to the offerer
         for (const c of e.pending.splice(0)) await e.pc.addIceCandidate(c).catch(() => {});
         const a = await e.pc.createAnswer(); await e.pc.setLocalDescription(a);
         sendSignal(from, { sdp: e.pc.localDescription });
@@ -367,6 +372,27 @@ async function onSignal(msg) {
     }
   } catch (err) { /* a bad negotiation heals itself through resetPeer */ }
 }
+const linkState = e => e.pc.connectionState || e.pc.iceConnectionState || 'new';
+function watchPeers() {              // a voice link that is still not up after a few seconds gets a fresh start
+  if (!st) return;
+  const now = Date.now();
+  for (const e of [...peers.values()]) {
+    const cs = linkState(e);
+    if (cs === 'connected' || cs === 'completed') continue;
+    const other = st.players.find(p => p.id === e.id);
+    if (other && other.connected && now - e.born > (e.initiator ? 8000 : 14000)) resetPeer(e.id);
+  }
+}
+function paintLinks() {
+  const el = $('#vlinks'); if (!el || !st) return;
+  const rows = [];
+  for (const e of peers.values()) {
+    const cs = linkState(e);
+    const ic = (cs === 'connected' || cs === 'completed') ? '✅' : (cs === 'failed' || cs === 'closed') ? '⚠️' : '⏳';
+    rows.push(ic + ' ' + esc(nameOf(e.id)));
+  }
+  el.innerHTML = rows.length ? 'Voice links: ' + rows.join(' · ') : 'Voice links: nobody else here yet';
+}
 function syncPeers() {
   if (!st || typeof RTCPeerConnection === 'undefined') return;
   const want = new Set(st.players.filter(p => p.id !== st.meId && !p.left).map(p => p.id));
@@ -379,7 +405,7 @@ function applyVoice() {
   for (const e of peers.values()) {
     const track = (ui.micOn && voice.track && to.has(e.id)) ? voice.track : null;
     const flag = track ? 1 : 0;
-    if (e.sending !== flag) { e.tr.sender.replaceTrack(track).catch(() => {}); e.sending = flag; }
+    if (e.tr && e.sending !== flag) { e.tr.sender.replaceTrack(track).catch(() => {}); e.sending = flag; }
     e.audio.muted = !from.has(e.id);
   }
 }
@@ -555,6 +581,7 @@ async function enterRoom() {
     ui.loops = true;
     setInterval(heartbeat, 2000); heartbeat();
     setInterval(tickTimer, 250);
+    setInterval(() => { watchPeers(); paintLinks(); }, 2000);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) { heartbeat(); resumeAudio(); } });
   }
 }
@@ -810,7 +837,9 @@ function renderAudio() {
     <p style="margin:0 0 10px"><b>${vl[0]} ${vl[1]}</b></p>
     <button class="btn ${ui.micOn ? '' : 'primary'}" data-a="mic">${micLabel}</button>
     ${ui.audioBlocked ? '<button class="btn quiet" data-a="unblock" style="margin-top:10px">Tap to hear other players</button>' : ''}
+    <p class="muted small" id="vlinks" style="margin:10px 0 0"></p>
     ${TTS.ok ? swRow('tts', 'Read chat aloud', 'Typed messages are spoken in the sender’s chosen voice.', ui.ttsOn) + swRow('narr', 'Narrator', 'The game announces nights, deaths and votes.', ui.narratorOn) : ''}</div>`;
+  paintLinks();
 }
 
 /* ---------- chat ---------- */
