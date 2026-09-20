@@ -318,7 +318,7 @@ let st = null;               // latest server view
 let pings = {};              // id -> {ms,c,st,left}
 let offset = 0;              // serverNow - clientNow
 let es = null;
-const ui = { name: '', gender: 'neutral', inviteCode: null, online: true, myPing: null, micOn: false, ttsOn: true, narratorOn: true, sfxOn: true, voicePref: store.get('mafia:voices') || {}, animCards: false, audioSig: '',
+const ui = { name: '', gender: 'neutral', inviteCode: null, online: true, myPing: null, micOn: false, ttsOn: true, narratorOn: true, said: new Set(), intro: {}, sfxOn: true, voicePref: store.get('mafia:voices') || {}, animCards: false, audioSig: '',
              detPick: null, pendingSel: null, phaseKey: '', mainSig: '', audioBlocked: false, homeErr: '' };
 
 /* =====================================================================================
@@ -867,18 +867,24 @@ function onState(v) {
   syncPeers(); applyVoice();
 }
 function announce(v) {
+  // The narrator speaks each event exactly once on this device, even if the page reconnects or the server re-sends state.
+  const mark = 'n:' + v.game + ':' + ui.phaseKey;
+  if (ui.said.has(mark)) return;
+  ui.said.add(mark);
+  // The long instructions are read the first time only; later rounds get just the short fact.
+  const first = k => { const f = !ui.intro[k]; ui.intro[k] = true; return f; };
   const names = ids => ids.map(nameOf).join(' and ');
   switch (v.phase) {
-    case 'reveal': narrate('The roles have been dealt. Look at your card.'); break;
-    case 'night': narrate(`Night ${v.night} falls. Everyone, close your eyes. Mafia, wake up.`); playCine([sceneNight(v.night)]); break;
+    case 'reveal': ui.intro = {}; narrate('The roles have been dealt. Look at your card.'); break;
+    case 'night': narrate(first('night') ? `Night ${v.night} falls. Everyone, close your eyes. Mafia, wake up.` : `Night ${v.night} falls.`); playCine([sceneNight(v.night)]); break;
     case 'dawn': {
       const d = v.dawn || { deaths: [], saves: [] };
       let t = d.deaths.length ? `Morning. ${names(d.deaths.map(x => x.id))} did not wake up.` : 'Morning. Nobody died last night.';
       if (d.saves && d.saves.length) t += ` ${names(d.saves)} was attacked, but the doctor saved them.`;
       narrate(t); playCine(dawnScenes(v)); break;
     }
-    case 'day': narrate('Discussion time. Talk it out.'); break;
-    case 'vote': narrate(v.vote && v.vote.round === 2 ? 'Revote. Choose between the tied players.' : 'Voting begins. Choose who to eliminate.'); break;
+    case 'day': narrate(first('day') ? 'Discussion time. Talk it out.' : `Day ${v.night}.`); break;
+    case 'vote': narrate(v.vote && v.vote.round === 2 ? 'Revote. Choose between the tied players.' : first('vote') ? 'Voting begins. Choose who to eliminate.' : 'Voting begins.'); break;
     case 'result': narrate(v.result && v.result.pid ? `${nameOf(v.result.pid)} has been voted out.` : 'Nobody was eliminated.'); playCine([sceneVerdict(v.result)]); break;
     case 'over': narrate((v.winner && WIN[v.winner.key] ? WIN[v.winner.key].title : 'Game over') + '.'); if (v.winner) playCine([sceneWin(v.winner)]); break;
   }
@@ -1141,7 +1147,7 @@ function renderAudio() {
     <button class="btn ${ui.micOn ? '' : 'primary'}" data-a="mic">${micLabel}</button>
     ${ui.audioBlocked ? '<button class="btn quiet" data-a="unblock" style="margin-top:10px">Tap to hear other players</button>' : ''}
     <p class="muted small" id="vlinks" style="margin:10px 0 0"></p>
-    ${TTS.ok ? swRow('tts', 'Read chat aloud', 'Typed messages are spoken in the sender’s chosen voice.', ui.ttsOn) + swRow('narr', 'Narrator', 'The game announces nights, deaths and votes.', ui.narratorOn) : ''}
+    ${TTS.ok ? swRow('tts', 'Read chat aloud', 'Typed messages are spoken in the sender’s chosen voice.', ui.ttsOn) + swRow('narr', 'Narrator', 'Announces nights, deaths and votes once each, on this device only. Turn it off on a second device in the same room.', ui.narratorOn) : ''}
     ${swRow('sfx', 'Sound effects', 'Night, morning, murder, saves and verdicts.', ui.sfxOn)}
     ${TTS.ok ? `<details style="margin-top:8px"><summary class="rn" style="cursor:pointer;min-height:40px;display:flex;align-items:center">Pick better voices</summary>
       <p class="muted small" style="margin:4px 0 8px">Voices come from your device. ★ marks the most natural ones. On Windows, Microsoft Edge has the best (look for “Natural”). Changing a voice plays a sample.</p>
