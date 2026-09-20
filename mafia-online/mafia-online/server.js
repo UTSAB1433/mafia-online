@@ -34,6 +34,7 @@ if (process.env.TURN_URL) {
 }
 
 const DEFAULTS = { reveal: true, selfHeal: true, tie: 'none', nightSec: 60, daySec: 150, voteSec: 45,
+  announceSave: true, mafiaAuto: true, mafiaCount: 2, doctor: true, detective: true,
   godfather: true, bodyguard: false, vigilante: false, jester: false, serialkiller: false };
 const COLORS = ['#e4572e', '#17bebb', '#ffc914', '#76b041', '#a06cd5', '#f08a4b', '#3a86ff', '#ef476f', '#06d6a0', '#c77dff', '#f4a261', '#4cc9f0', '#b5838d', '#90be6d', '#ff9f1c'];
 
@@ -164,12 +165,13 @@ function view(room, p) {
     if (kind === 'mafia') { a.team = {}; for (const q of room.players.values()) if (q.alive && isM(q) && room.picks[q.id] !== undefined) a.team[q.id] = room.picks[q.id]; }
     v.you.action = a;
   }
+  if (room.phase === 'lobby') v.plan = planInfo(room);
   if (room.phase === 'day') {
     const el = [...room.players.values()].filter(q => q.alive && q.connected && !q.left);
     v.ready = { count: el.filter(q => q.ready).length, need: Math.floor(el.length / 2) + 1 };
   }
   if (room.phase === 'vote') v.vote = { cands: room.voteCands, votes: room.votes, round: room.voteRound };
-  if (room.phase === 'dawn') v.dawn = room.dawn;
+  if (room.phase === 'dawn') v.dawn = { deaths: room.dawn.deaths, saves: room.settings.announceSave ? room.dawn.saves : [], notice: room.dawn.notices[p.id] || null };
   if (room.phase === 'result') v.result = room.result;
   if (room.phase === 'over') {
     v.winner = room.winner;
@@ -179,20 +181,40 @@ function view(room, p) {
 }
 
 /* ------------------------------------------------------------------ game engine (the moderator) */
-function composeRoles(n, s) {
-  const team = Math.max(1, Math.floor((n + 2) / 4));
-  const roles = []; let mafia = team;
+/*
+ * Role plan (what the host controls in the lobby):
+ *  - Doctor is in by default; the host can switch it off.
+ *  - Detective is only in the game when there are 2 or more Mafia (and the host has not switched it off).
+ *  - Mafia count is auto-balanced by default; the host can choose it instead (1 to 3). It is always kept low enough
+ *    that the Mafia cannot already control the vote at the start. The Mafia team makes 1 kill per night.
+ *  - Godfather (if on) is one of the Mafia, so it needs 2+ Mafia.
+ *  - Optional roles are added only if there is room for them.
+ */
+const MAX_MAFIA = 3;                                             // never more than 3 Mafia
+const maxTeam = n => Math.max(1, Math.min(MAX_MAFIA, Math.floor((n - 1) / 2)));
+const autoTeam = n => Math.min(MAX_MAFIA, Math.max(1, Math.floor((n + 2) / 4)));
+const teamFor = (n, s) => s.mafiaAuto ? Math.min(autoTeam(n), maxTeam(n)) : Math.max(1, Math.min(maxTeam(n), Math.round(+s.mafiaCount) || 1));
+function composePlan(n, s) {
+  const team = teamFor(n, s), roles = []; let mafia = team;
   if (s.godfather && team >= 2) { roles.push('godfather'); mafia--; }
   for (let i = 0; i < mafia; i++) roles.push('mafia');
-  if (n >= 5) roles.push('detective');
-  if (n >= 6) roles.push('doctor');
-  if (s.bodyguard && n >= 8) roles.push('bodyguard');
-  if (s.vigilante && n >= 8) roles.push('vigilante');
-  if (s.jester && n >= 7) roles.push('jester');
-  if (s.serialkiller && n >= 9) roles.push('serialkiller');
+  if (s.doctor) roles.push('doctor');
+  const optional = [];
+  if (s.detective && team >= 2) optional.push('detective');
+  if (s.bodyguard && n >= 8) optional.push('bodyguard');
+  if (s.vigilante && n >= 8) optional.push('vigilante');
+  if (s.jester && n >= 7) optional.push('jester');
+  if (s.serialkiller && n >= 9) optional.push('serialkiller');
+  for (const r of optional) if (roles.length < n) roles.push(r);
   while (roles.length < n) roles.push('villager');
-  return shuffle(roles.slice(0, n));
+  return roles.slice(0, n);
 }
+function planInfo(room) {
+  const n = [...room.players.values()].filter(p => !p.left).length;
+  const counts = {}; composePlan(n, room.settings).forEach(r => { counts[r] = (counts[r] || 0) + 1; });
+  return { n, team: teamFor(n, room.settings), autoTeam: Math.min(autoTeam(n), maxTeam(n)), maxTeam: maxTeam(n), counts };
+}
+const composeRoles = (n, s) => shuffle(composePlan(n, s));
 function setDeadline(room, at) {
   room.phaseEnd = at;
   clearTimeout(room.timer);
@@ -289,11 +311,18 @@ function resolveNight(room) {
   picks.filter(x => x.kind === 'detective').forEach(x => notes.push(`Detective ${x.p.name} investigated ${P.get(x.t).name}: ${P.get(x.t).role === 'mafia' ? 'Mafia' : 'Not Mafia'}.`));
   const healed = new Set(picks.filter(x => x.kind === 'doctor').map(x => x.t));
   const guards = picks.filter(x => x.kind === 'bodyguard');
-  const dead = new Set();
+  const dead = new Set(), saves = [], notices = {};
   for (const a of attacks) {
     const t = P.get(a.t);
     if (!t || dead.has(t.id)) continue;
-    if (healed.has(t.id)) { notes.push(`${a.src} attacked ${t.name}, but the Doctor saved them.`); continue; }
+    if (healed.has(t.id)) {
+      notes.push(`${a.src} attacked ${t.name}, but the Doctor saved them.`);
+      if (!saves.includes(t.id)) {
+        saves.push(t.id); notices[t.id] = { type: 'saved', id: t.id };            // the saved player always knows
+        picks.filter(x => x.kind === 'doctor' && x.t === t.id).forEach(x => { if (!notices[x.p.id]) notices[x.p.id] = { type: 'patient', id: t.id }; });   // and so does the Doctor
+      }
+      continue;
+    }
     const gd = guards.find(x => x.t === t.id && !dead.has(x.p.id));
     if (gd) { dead.add(gd.p.id); notes.push(`${a.src} attacked ${t.name}. Bodyguard ${gd.p.name} died in their place.`); continue; }
     dead.add(t.id); notes.push(`${a.src} killed ${t.name} (${t.role}).`);
@@ -302,8 +331,8 @@ function resolveNight(room) {
   notes.forEach(text => room.log.push({ label: `Night ${n}`, text }));
   const deaths = [...dead].map(id => P.get(id));
   deaths.forEach(p => { p.alive = false; });
-  room.dawn = { deaths: deaths.map(p => ({ id: p.id, role: room.settings.reveal ? p.role : null })) };
-  setPhase(room, 'dawn', T(8));
+  room.dawn = { deaths: deaths.map(p => ({ id: p.id, role: room.settings.reveal ? p.role : null })), saves, notices };
+  setPhase(room, 'dawn', T(Math.min(22, 4.5 + 3.6 * (deaths.length + saves.length))));   // long enough for the morning scenes
 }
 function checkWin(room) {
   const al = [...room.players.values()].filter(p => p.alive);
@@ -413,7 +442,8 @@ function handleAct(room, p, b) {
     case 'settings': {
       if (p.id !== room.hostId || room.phase !== 'lobby') return { error: 'Only the host can change settings in the lobby.' };
       const s = b.settings || {}, o = room.settings;
-      for (const k of ['reveal', 'selfHeal', 'godfather', 'bodyguard', 'vigilante', 'jester', 'serialkiller']) if (typeof s[k] === 'boolean') o[k] = s[k];
+      for (const k of ['reveal', 'selfHeal', 'announceSave', 'mafiaAuto', 'doctor', 'detective', 'godfather', 'bodyguard', 'vigilante', 'jester', 'serialkiller']) if (typeof s[k] === 'boolean') o[k] = s[k];
+      if (s.mafiaCount != null) o.mafiaCount = clamp(s.mafiaCount, 1, MAX_MAFIA);
       if (['none', 'revote', 'random'].includes(s.tie)) o.tie = s.tie;
       if (s.nightSec != null) o.nightSec = clamp(s.nightSec, FAST ? 1 : 30, 180);
       if (s.daySec != null) o.daySec = clamp(s.daySec, FAST ? 1 : 30, 600);
@@ -600,4 +630,4 @@ setInterval(() => {
 if (require.main === module) {
   server.listen(PORT, () => console.log(`Mafia online listening on http://localhost:${PORT}`));
 }
-module.exports = { server, rooms };
+module.exports = { server, rooms, composePlan, autoTeam, maxTeam };
