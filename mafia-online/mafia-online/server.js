@@ -59,7 +59,7 @@ function newPlayer(room, name, gender) {
   const color = COLORS.find(c => !used.has(c)) || COLORS[room.players.size % COLORS.length];
   const p = { id: rid(4), token: rid(16), name, gender: ['male', 'female', 'neutral'].includes(gender) ? gender : 'neutral', color,
     connected: false, res: null, lastSeen: now(), lostAt: 0, lostNotice: false, ping: null, highNoticeAt: 0,
-    alive: true, role: null, bullets: 0, left: false, ready: false, det: [], chatTimes: [], sigTimes: [] };
+    alive: true, role: null, bullets: 0, left: false, ready: false, det: [], chatTimes: [], sigTimes: [], sigQueue: [] };
   room.players.set(p.id, p); room.order.push(p.id);
   return p;
 }
@@ -451,7 +451,10 @@ function handleAct(room, p, b) {
       if (p.sigTimes.length >= 250) return { error: 'Too many signals.' };
       p.sigTimes.push(t);
       const target = room.players.get(String(b.to || ''));
-      if (target && target.id !== p.id) send(target, 'signal', { from: p.id, data: b.data });
+      if (target && target.id !== p.id) {
+        if (target.res) send(target, 'signal', { from: p.id, data: b.data });
+        else if (!target.left) { target.sigQueue.push({ from: p.id, data: b.data, t: now() }); if (target.sigQueue.length > 80) target.sigQueue.shift(); }   // hold it until they connect
+      }
       return { ok: true };
     }
     case 'night': {
@@ -524,6 +527,7 @@ const server = http.createServer(async (req, res) => {
       setConn(room, p, true);
       send(p, 'chatlog', room.chat.filter(m => canSee(room, p, m)));
       send(p, 'pings', pingsPayload(room));
+      { const t0 = now(); for (const m of p.sigQueue.splice(0)) if (t0 - m.t < 60000) send(p, 'signal', { from: m.from, data: m.data }); }
       const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch (e) {} }, 15000);
       req.on('close', () => { clearInterval(hb); if (p.res === res) { p.res = null; if (rooms.has(room.code) && room.players.has(p.id)) setConn(room, p, false); } });
       return;
