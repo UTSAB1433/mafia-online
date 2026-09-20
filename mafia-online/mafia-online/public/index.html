@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mafia Online</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Libre+Franklin:wght@400;500;600;700&family=Special+Elite&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#dde2dc; --surface:#eef0ea; --surface2:#cdd5cd; --ink:#12201f; --muted:#47585a;
+  --line:#a7b3ac; --edge:#12201f; --accent:#b3141f; --accent-ink:#fff7f2; --good:#1f6b3a; --warn:#96600a; --bad:#b3141f;
+  --display:'Anton','Impact','Arial Narrow',sans-serif;
+  --body:'Libre Franklin',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --type:'Special Elite','Courier New',Courier,monospace;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0c1517; --surface:#142124; --surface2:#1c2d31; --ink:#e6ebe6; --muted:#94a7a5;
+    --line:#2b4045; --edge:#e6ebe6; --accent:#ef4b4b; --accent-ink:#1a0505; --good:#5fcf8b; --warn:#f0b34a; --bad:#ff6b6b;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0c1517; --surface:#142124; --surface2:#1c2d31; --ink:#e6ebe6; --muted:#94a7a5;
+  --line:#2b4045; --edge:#e6ebe6; --accent:#ef4b4b; --accent-ink:#1a0505; --good:#5fcf8b; --warn:#f0b34a; --bad:#ff6b6b;
+  color-scheme:dark;
+}
+:root.night{
+  --bg:#070d12; --surface:#0f1922; --surface2:#16242f; --ink:#f0e8d6; --muted:#8fa0ad;
+  --line:#24384a; --edge:#f2a93b; --accent:#f2a93b; --accent-ink:#1a1000; --good:#7ddf9f; --warn:#f2c46b; --bad:#ff7a6b;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{background:var(--bg);scroll-padding-top:env(safe-area-inset-top,0px);transition:background .5s}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased;transition:background .5s,color .5s}
+button,input,select{font-family:inherit;color:inherit}
+.app{max-width:1080px;margin:0 auto;padding:12px 18px 56px}
+.narrow{max-width:560px;margin:0 auto}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+
+.h1{font-family:var(--display);font-weight:400;font-size:clamp(40px,12vw,60px);line-height:1.02;margin:0}
+.h2{font-family:var(--display);font-weight:400;font-size:clamp(28px,7.5vw,38px);line-height:1.08;margin:0 0 6px}
+.h3{font-size:17px;font-weight:700;margin:0 0 4px}
+.note{font-family:var(--type);font-size:15px;color:var(--muted);margin:0 0 8px}
+.muted{color:var(--muted)} .small{font-size:14px} p{margin:0 0 10px} .center{text-align:center}
+.stack{display:flex;flex-direction:column;gap:16px} .stack.tight{gap:10px}
+.title{font-family:var(--display);font-size:clamp(96px,30vw,160px);line-height:.88;margin:0}
+.stamp{display:inline-block;font-family:var(--type);font-size:19px;color:var(--accent);border:3px solid var(--accent);padding:4px 12px;border-radius:4px;transform:rotate(-3deg);margin:10px 0 16px}
+.lede{font-size:18px;max-width:38ch}
+.brand{font-family:var(--display);font-size:22px;letter-spacing:.06em}
+.top{display:flex;align-items:center;justify-content:space-between;padding:6px 0 16px}
+
+.btn{appearance:none;display:block;width:100%;background:var(--surface);border:2px solid var(--edge);border-radius:10px;padding:14px 18px;min-height:52px;font-size:17px;font-weight:700;cursor:pointer;box-shadow:0 3px 0 var(--edge);transition:transform .08s,box-shadow .08s;text-align:center}
+.btn:active{transform:translateY(3px);box-shadow:0 0 0 var(--edge)}
+.btn.primary{background:var(--accent);color:var(--accent-ink)}
+.btn.big{padding:18px;font-size:19px;min-height:60px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn:disabled:active{transform:none;box-shadow:0 3px 0 var(--edge)}
+.btn.quiet{box-shadow:none;border-color:var(--line);font-weight:600}
+.btn.quiet:active{transform:none}
+.btn.inline{display:inline-block;width:auto}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.panel{background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--edge);border-radius:6px;padding:16px}
+.panel .note{margin-bottom:10px}
+.field{display:flex;gap:10px}
+input[type=text]{flex:1;min-width:0;width:100%;font-size:17px;padding:12px 14px;min-height:50px;border:2px solid var(--edge);border-radius:10px;background:var(--bg)}
+select{font-size:16px;padding:8px 10px;min-height:44px;border:2px solid var(--edge);border-radius:10px;background:var(--bg)}
+.err{color:var(--bad);font-weight:600;margin:8px 0 0}
+.seg{display:flex;background:var(--surface2);border-radius:10px;padding:4px;gap:4px}
+.seg button{flex:1;appearance:none;border:0;background:transparent;border-radius:7px;padding:10px 6px;min-height:44px;font-weight:600;font-size:15px;cursor:pointer}
+.seg button.on{background:var(--surface);box-shadow:0 0 0 2px var(--edge) inset}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.rn{font-weight:700}
+.sw{appearance:none;width:52px;height:30px;border-radius:999px;border:2px solid var(--edge);background:var(--surface2);position:relative;cursor:pointer;flex:none}
+.sw::after{content:'';position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:var(--edge);transition:transform .15s}
+.sw[aria-checked="true"]{background:var(--accent)}
+.sw[aria-checked="true"]::after{transform:translateX(22px);background:var(--accent-ink)}
+.sw:disabled{opacity:.5;cursor:default}
+.divider{display:flex;align-items:center;gap:12px;color:var(--muted);font-family:var(--type)}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--line)}
+.feat{margin:0;padding:0;list-style:none;display:grid;gap:8px}
+.feat li{display:flex;gap:10px;align-items:flex-start}
+
+/* room */
+.rtop{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 0 14px}
+.rtop .grow{flex:1}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 12px;font-weight:700;min-height:40px;cursor:pointer;font-size:15px}
+.phase{font-family:var(--display);font-size:22px;letter-spacing:.03em}
+.timer{font-family:var(--display);font-size:26px;min-width:64px;text-align:right;font-variant-numeric:tabular-nums}
+.timer.low{color:var(--bad)}
+.iconbtn{appearance:none;background:var(--surface);border:1px solid var(--line);border-radius:10px;min-width:44px;min-height:44px;padding:0 12px;font-size:18px;cursor:pointer}
+.iconbtn.on{border-color:var(--good);box-shadow:0 0 0 2px var(--good) inset}
+.pingchip{font-family:var(--type);font-size:14px}
+.banner{background:var(--bad);color:#fff;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-weight:600}
+.roomgrid{display:grid;gap:18px}
+@media (min-width:900px){.roomgrid{grid-template-columns:minmax(0,1fr) 380px;align-items:start}.colR{position:sticky;top:12px}#msgs{height:380px!important}}
+.colL,.colR{display:flex;flex-direction:column;gap:16px;min-width:0}
+.bigname{font-family:var(--display);font-size:clamp(40px,12vw,64px);line-height:1;word-break:break-word;margin:6px 0}
+.roleicon{font-size:76px;line-height:1}.roleicon.sm{font-size:48px}
+.rolename{font-family:var(--display);font-size:clamp(44px,13vw,60px);line-height:1;margin:6px 0 10px}
+.teamtag{display:inline-block;font-family:var(--type);border:2px solid var(--edge);border-radius:4px;padding:2px 10px;margin-bottom:12px}
+.verdict{font-family:var(--type);font-size:20px;border:3px solid currentColor;display:inline-block;padding:1px 10px;border-radius:5px;margin-left:6px}
+.verdict.bad{color:var(--bad)}.verdict.good{color:var(--good)}
+.code{font-family:var(--display);font-size:54px;letter-spacing:.14em;line-height:1}
+.linkbox{display:flex;gap:8px;margin-top:10px}
+.linkbox input{font-size:14px;min-height:44px}
+.linkbox .btn{width:auto;padding:0 16px;min-height:44px;box-shadow:none;font-size:15px}
+.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:10px}
+.pl{position:relative;border:2px solid var(--line);border-radius:12px;background:var(--surface);padding:10px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:2px;min-height:118px;user-select:none}
+.pl.me{border-color:var(--edge)}
+.pl.tgt{cursor:pointer;border-color:var(--accent);border-style:dashed}
+.pl.sel{background:var(--accent);color:var(--accent-ink);border-style:solid}
+.pl.sel .ping,.pl.sel .rtag,.pl.sel .vtag{color:inherit}
+.pl.dead{opacity:.55}.pl.dead .nm{text-decoration:line-through}
+.av{position:relative;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:24px;color:#111;margin-bottom:2px;transition:box-shadow .1s}
+.av.speaking{box-shadow:0 0 0 3px var(--bg),0 0 0 6px var(--good)}
+.nm{font-weight:700;word-break:break-word;line-height:1.2}
+.ping{font-family:var(--type);font-size:13px;color:var(--muted);line-height:1.2}
+.ping.good{color:var(--good)}.ping.warn{color:var(--warn)}.ping.bad{color:var(--bad);font-weight:700}
+.rtag{font-size:13px;font-weight:600}
+.vtag{font-family:var(--type);font-size:13px;color:var(--accent)}
+.chatbox{background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--edge);border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:8px}
+#msgs{height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding-right:4px}
+.msg{font-size:15px;line-height:1.35;word-break:break-word}
+.msg .who{font-weight:700}
+.msg.sys{font-family:var(--type);color:var(--muted);font-size:14px}
+.msg.mafia{border-left:3px solid var(--accent);padding-left:8px}
+.msg.dead{opacity:.8;font-style:italic}
+#chatForm{display:flex;gap:8px}
+#chatForm input{min-height:46px;font-size:16px}
+#chatForm button{appearance:none;border:2px solid var(--edge);background:var(--accent);color:var(--accent-ink);font-weight:700;border-radius:10px;padding:0 16px;min-height:46px;cursor:pointer}
+#chatForm button:disabled,#chatForm input:disabled{opacity:.5}
+.rosterrow{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line)}
+.rosterrow:first-of-type{border-top:0}.rosterrow.out{opacity:.6}
+.log{list-style:none;margin:0;padding:0;font-family:var(--type);font-size:15px}
+.log li{padding:6px 0;border-top:1px dashed var(--line)}.log li:first-child{border-top:0}.log b{color:var(--accent)}
+.script{font-family:var(--type);border-left:4px solid var(--accent);padding:4px 0 4px 12px;text-align:left}
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:calc(20px + env(safe-area-inset-top,0px)) 20px calc(20px + env(safe-area-inset-bottom,0px));z-index:20}
+.modal{background:var(--surface);border:2px solid var(--edge);border-radius:10px;padding:20px;max-width:380px;width:100%}
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-weight:600;z-index:30;max-width:90vw;opacity:0;pointer-events:none;transition:opacity .2s}
+#toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div id="app" class="app"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script>
+'use strict';
+/* =====================================================================================
+ * MAFIA ONLINE — browser client
+ * The server is the moderator. This file only shows what the server says you may see,
+ * sends your actions, and handles voice (WebRTC), read-aloud chat (speech synthesis)
+ * and the per-player ping display.
+ * ===================================================================================== */
+const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+};
+const isM = r => r === 'mafia' || r === 'godfather';
+
+const ROLES = {
+  villager:     { name: 'Villager',      icon: '🏘️', team: 'Town',        blurb: 'No special ability. Your weapons are discussion, logic and your vote.' },
+  mafia:        { name: 'Mafia',         icon: '🕶️', team: 'Mafia',       blurb: 'Each night your team chooses a victim, and you can talk to your team at night. By day, blend in.' },
+  godfather:    { name: 'Godfather',     icon: '👑', team: 'Mafia',       blurb: 'Mafia leader. The Detective sees you as innocent. Help pick a victim each night.' },
+  detective:    { name: 'Detective',     icon: '🔎', team: 'Town',        blurb: 'Each night, investigate one player to learn if they are Mafia. Reveal yourself carefully.' },
+  doctor:       { name: 'Doctor',        icon: '🩺', team: 'Town',        blurb: 'Each night, protect one player. If they are attacked, they survive.' },
+  bodyguard:    { name: 'Bodyguard',     icon: '🛡️', team: 'Town',        blurb: 'Each night, guard one player. If they are attacked, you die in their place.' },
+  vigilante:    { name: 'Vigilante',     icon: '🔫', team: 'Town',        blurb: 'One bullet for the whole game. Shoot an innocent and you have helped the Mafia.' },
+  jester:       { name: 'Jester',        icon: '🤡', team: 'Third party', blurb: 'You win only if the town votes you out. Look suspicious, but not too obviously.' },
+  serialkiller: { name: 'Serial Killer', icon: '☠️', team: 'Third party', blurb: 'Kill one player every night. Be the last one standing.' }
+};
+const META = {
+  mafia:        { icon: '🕶️', title: 'Choose tonight’s victim', sub: 'Talk it over on the Mafia line (voice or chat). The most-picked player is targeted; ties are random.' },
+  doctor:       { icon: '🩺', title: 'Who do you protect?', sub: 'They survive any attack tonight.' },
+  bodyguard:    { icon: '🛡️', title: 'Who do you guard?', sub: 'If they are attacked, you die in their place.' },
+  detective:    { icon: '🔎', title: 'Who do you investigate?', sub: 'You get one look each night. You will learn if they are Mafia.' },
+  vigilante:    { icon: '🔫', title: 'Take your shot?', sub: 'You have one bullet. Shooting Town helps the Mafia.' },
+  serialkiller: { icon: '☠️', title: 'Choose your victim', sub: 'One kill per night. Outlast everyone.' },
+  decoy:        { icon: '🌙', title: 'You are asleep', sub: 'You have no night ability. The Mafia are talking. Stay quiet until morning.' }
+};
+const WIN = {
+  town:   { icon: '🏘️', title: 'Town wins', text: 'Every Mafia member has been eliminated.' },
+  mafia:  { icon: '🕶️', title: 'Mafia wins', text: 'The Mafia now control the vote.' },
+  sk:     { icon: '☠️', title: 'The Serial Killer wins', text: 'They are the last one standing.' },
+  jester: { icon: '🤡', title: 'The Jester wins', text: 'They got themselves voted out.' },
+  draw:   { icon: '🌫️', title: 'No survivors', text: 'Everyone is gone. Nobody wins.' }
+};
+const PHASE_LABEL = { lobby: 'Lobby', reveal: 'Your role', night: 'Night', dawn: 'Dawn', day: 'Day', vote: 'Vote', result: 'Verdict', over: 'Game over' };
+
+/* ---------- state ---------- */
+let cfg = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+let session = null;          // {code,pid,token}
+let st = null;               // latest server view
+let pings = {};              // id -> {ms,c,st,left}
+let offset = 0;              // serverNow - clientNow
+let es = null;
+const ui = { name: '', gender: 'neutral', inviteCode: null, online: true, myPing: null, micOn: false, ttsOn: true, narratorOn: true,
+             detPick: null, pendingSel: null, phaseKey: '', mainSig: '', audioBlocked: false, homeErr: '' };
+
+/* =====================================================================================
+ * TEXT-TO-SPEECH: chat is read aloud in a male / female / neutral voice, chosen at join
+ * ===================================================================================== */
+const TTS = { ok: typeof speechSynthesis !== 'undefined' && typeof SpeechSynthesisUtterance !== 'undefined', voices: [], queue: [], busy: false, cur: null };
+function loadVoices() { if (TTS.ok) TTS.voices = speechSynthesis.getVoices() || []; }
+if (TTS.ok) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+const FEM = /female|woman|zira|samantha|susan|karen|victoria|hazel|aria|jenny|tessa|moira|fiona|allison|ava\b|serena|kate|catherine|sara\b|amy|emma|joanna|salli|kimberly|ivy|libby|sonia|natasha|clara|nova|shimmer|siri/i;
+const MAL = /\bmale\b|david|mark\b|daniel|alex\b|fred\b|george|guy\b|ryan|thomas|oliver|arthur|james|matthew|joey|justin|brian|russell|liam|davis|eric\b|roger|steffan|onyx|echo/i;
+function pickVoice(gender) {
+  const en = TTS.voices.filter(v => /^en/i.test(v.lang));
+  const pool = en.length ? en : TTS.voices;
+  if (gender === 'female') return pool.find(v => FEM.test(v.name)) || null;
+  if (gender === 'male') return pool.find(v => MAL.test(v.name) && !FEM.test(v.name)) || null;
+  return null;
+}
+function speak(text, gender, priority) {
+  if (!TTS.ok || !text) return;
+  const item = { text: String(text).slice(0, 320), gender };
+  if (priority) TTS.queue.unshift(item); else { if (TTS.queue.length >= 6) TTS.queue.shift(); TTS.queue.push(item); }
+  pump();
+}
+function pump() {
+  if (TTS.busy || !TTS.queue.length) return;
+  const it = TTS.queue.shift();
+  const u = new SpeechSynthesisUtterance(it.text);
+  const v = pickVoice(it.gender);
+  if (v) { u.voice = v; u.lang = v.lang; }
+  u.pitch = v ? 1 : (it.gender === 'female' ? 1.35 : it.gender === 'male' ? 0.72 : 1);   // no matching voice installed: shift pitch instead
+  u.rate = 1.05;
+  TTS.busy = true; TTS.cur = it;
+  const done = () => { if (TTS.cur !== it) return; TTS.busy = false; TTS.cur = null; pump(); };
+  u.onend = done; u.onerror = done;
+  setTimeout(done, Math.min(20000, 2500 + it.text.length * 90));   // safety: some browsers never fire onend
+  try { speechSynthesis.speak(u); } catch (e) { done(); }
+}
+function narrate(text) { if (ui.narratorOn) speak(text, 'neutral', true); }
+document.addEventListener('pointerdown', () => {            // browsers need a user gesture before audio
+  if (TTS.ok && !ui.ttsPrimed) { ui.ttsPrimed = true; try { speechSynthesis.speak(new SpeechSynthesisUtterance(' ')); } catch (e) {} }
+  ensureCtx(); resumeAudio();
+}, { passive: true });
+
+/* =====================================================================================
+ * VOICE CHAT: WebRTC mesh. The server says who you may talk to / hear right now.
+ * Night: only the Mafia hear each other. Day: living players. Ghosts: only ghosts speak to ghosts.
+ * ===================================================================================== */
+const voice = { stream: null, track: null, ctx: null, meters: new Map(), timer: null };
+const peers = new Map();
+function ensureCtx() {
+  if (voice.ctx || !(window.AudioContext || window.webkitAudioContext)) return;
+  try { voice.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+  if (voice.ctx && !voice.timer) voice.timer = setInterval(meterLoop, 150);
+}
+function resumeAudio() {
+  if (voice.ctx && voice.ctx.state === 'suspended') voice.ctx.resume().catch(() => {});
+  for (const e of peers.values()) if (e.audio.srcObject && e.audio.paused) e.audio.play().then(() => { if (ui.audioBlocked) { ui.audioBlocked = false; renderAudio(); } }).catch(() => {});
+}
+function addMeter(key, stream) {
+  ensureCtx(); if (!voice.ctx) return;
+  try {
+    const src = voice.ctx.createMediaStreamSource(stream), an = voice.ctx.createAnalyser();
+    an.fftSize = 256; src.connect(an);
+    voice.meters.set(key, { an, buf: new Uint8Array(an.fftSize), src });
+  } catch (e) {}
+}
+function meterLoop() {
+  if (!st) return;
+  const from = new Set(st.voice.from);
+  for (const [key, m] of voice.meters) {
+    m.an.getByteTimeDomainData(m.buf);
+    let sum = 0; for (let i = 0; i < m.buf.length; i++) { const v = (m.buf[i] - 128) / 128; sum += v * v; }
+    const talking = Math.sqrt(sum / m.buf.length) > 0.035;
+    const id = key === 'me' ? st.meId : key;
+    const ok = key === 'me' ? (ui.micOn && voice.track && voice.track.enabled && st.voice.to.length > 0) : from.has(id);
+    const el = document.querySelector(`[data-pl="${id}"] .av`);
+    if (el) el.classList.toggle('speaking', talking && ok);
+  }
+}
+async function toggleMic() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast('Your browser cannot use the microphone here. Voice needs HTTPS.'); return; }
+  if (!voice.stream) {
+    try {
+      voice.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      voice.track = voice.stream.getAudioTracks()[0];
+      addMeter('me', voice.stream);
+      ui.micOn = true;
+    } catch (e) {
+      toast(e && e.name === 'NotAllowedError' ? 'Microphone blocked. Allow it in your browser settings.' : 'Could not open the microphone.');
+      return;
+    }
+  } else {
+    ui.micOn = !ui.micOn;
+    voice.track.enabled = ui.micOn;
+  }
+  ensureCtx(); resumeAudio(); applyVoice(); renderAudio(); renderTop();
+}
+function sendSignal(to, data) { api('signal', { to, data }, { quiet: true, retry: 1 }); }
+function makePeer(id, opts) {
+  opts = opts || {};
+  const pc = new RTCPeerConnection({ iceServers: cfg.iceServers });
+  const tr = pc.addTransceiver('audio', { direction: 'sendrecv' });
+  const audio = new Audio(); audio.autoplay = true; audio.playsInline = true;
+  const e = { id, pc, tr, audio, pending: [], initiator: st.meId < id, sending: 0, resetTimer: null };
+  peers.set(id, e);
+  pc.onicecandidate = ev => { if (ev.candidate) sendSignal(id, { ice: ev.candidate }); };
+  pc.ontrack = ev => {
+    const ms = ev.streams[0] || new MediaStream([ev.track]);
+    audio.srcObject = ms; addMeter(id, ms);
+    audio.play().catch(() => { ui.audioBlocked = true; renderAudio(); });
+    applyVoice();
+  };
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'failed') { clearTimeout(e.resetTimer); e.resetTimer = setTimeout(() => { if (peers.get(id) === e) resetPeer(id); }, 1500); }
+  };
+  if (e.initiator && !opts.noOffer) makeOffer(e);
+  return e;
+}
+async function makeOffer(e) {
+  try { const o = await e.pc.createOffer(); await e.pc.setLocalDescription(o); sendSignal(e.id, { sdp: e.pc.localDescription }); } catch (err) { /* will retry on reset */ }
+}
+function closePeer(id) {
+  const e = peers.get(id); if (!e) return;
+  clearTimeout(e.resetTimer);
+  try { e.pc.close(); } catch (err) {}
+  e.audio.srcObject = null; voice.meters.delete(id); peers.delete(id);
+}
+function resetPeer(id) {
+  closePeer(id);
+  if (!st || !st.players.some(p => p.id === id && !p.left)) return;
+  const e = makePeer(id, { noOffer: st.meId > id });
+  if (st.meId > id) sendSignal(id, { reset: 1 });      // ask the other side (the initiator) to send a fresh offer
+  applyVoice(); return e;
+}
+async function onSignal(msg) {
+  if (!st) return;
+  const from = msg.from, d = msg.data || {};
+  if (!st.players.some(p => p.id === from && !p.left)) return;
+  let e = peers.get(from);
+  try {
+    if (d.reset) { if (st.meId < from) { closePeer(from); makePeer(from); applyVoice(); } return; }
+    if (d.sdp) {
+      if (d.sdp.type === 'offer') {
+        if (e && (['failed', 'closed', 'disconnected'].includes(e.pc.connectionState) || e.pc.signalingState !== 'stable')) { closePeer(from); e = null; }
+        if (!e) e = makePeer(from, { noOffer: true });
+        await e.pc.setRemoteDescription(d.sdp);
+        for (const c of e.pending.splice(0)) await e.pc.addIceCandidate(c).catch(() => {});
+        const a = await e.pc.createAnswer(); await e.pc.setLocalDescription(a);
+        sendSignal(from, { sdp: e.pc.localDescription });
+        applyVoice();
+      } else if (e && e.pc.signalingState === 'have-local-offer') {
+        await e.pc.setRemoteDescription(d.sdp);
+        for (const c of e.pending.splice(0)) await e.pc.addIceCandidate(c).catch(() => {});
+      }
+    } else if (d.ice) {
+      if (!e) e = makePeer(from, { noOffer: true });
+      if (e.pc.remoteDescription) await e.pc.addIceCandidate(d.ice).catch(() => {}); else e.pending.push(d.ice);
+    }
+  } catch (err) { /* a bad negotiation heals itself through resetPeer */ }
+}
+function syncPeers() {
+  if (!st || typeof RTCPeerConnection === 'undefined') return;
+  const want = new Set(st.players.filter(p => p.id !== st.meId && !p.left).map(p => p.id));
+  for (const id of [...peers.keys()]) if (!want.has(id)) closePeer(id);
+  for (const id of want) if (!peers.has(id)) makePeer(id);
+}
+function applyVoice() {
+  if (!st) return;
+  const to = new Set(st.voice.to), from = new Set(st.voice.from);
+  for (const e of peers.values()) {
+    const track = (ui.micOn && voice.track && to.has(e.id)) ? voice.track : null;
+    const flag = track ? 1 : 0;
+    if (e.sending !== flag) { e.tr.sender.replaceTrack(track).catch(() => {}); e.sending = flag; }
+    e.audio.muted = !from.has(e.id);
+  }
+}
+
+/* =====================================================================================
+ * NETWORK: SSE in, JSON POST out. Heartbeat measures ping. Nothing here ever gives up on you.
+ * ===================================================================================== */
+async function api(type, data, opt) {
+  opt = opt || {}; data = data || {};
+  const tries = opt.retry == null ? 3 : opt.retry;
+  for (let i = 0; i <= tries; i++) {
+    try {
+      const r = await fetch('/api/act', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room: session.code, pid: session.pid, token: session.token, type, ...data }) });
+      if (r.status === 401) { sessionOver('Your session has ended.'); return { error: 'expired' }; }
+      const j = await r.json();
+      if (j.error && !opt.quiet) toast(j.error);
+      return j;
+    } catch (e) { await sleep(400 * (i + 1)); }      // slow or dropped connection: keep trying, never lose the action
+  }
+  if (!opt.quiet) toast('Connection is slow. Your action may be delayed.');
+  return { error: 'network' };
+}
+function connect() {
+  if (es) es.close();
+  es = new EventSource(`/api/events?room=${session.code}&pid=${session.pid}&token=${session.token}`);
+  es.onopen = () => { ui.online = true; renderBanner(); };
+  es.onerror = () => { ui.online = false; renderBanner(); if (es.readyState === 2) setTimeout(recheck, 2000); };
+  es.addEventListener('state', e => onState(JSON.parse(e.data)));
+  es.addEventListener('pings', e => { pings = JSON.parse(e.data); paintPings(); });
+  es.addEventListener('signal', e => onSignal(JSON.parse(e.data)));
+  es.addEventListener('chatlog', e => { $('#msgs').innerHTML = ''; JSON.parse(e.data).forEach(m => addMsg(m, false)); });
+  es.addEventListener('chat', e => addMsg(JSON.parse(e.data), true));
+}
+async function recheck() {
+  try {
+    const r = await fetch('/api/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(session) });
+    if (r.status === 404) return sessionOver('That game is no longer available.');
+  } catch (e) {}
+  if (session) connect();
+}
+async function heartbeat() {
+  if (!session) return;
+  const t = performance.now();
+  try {
+    await fetch('/api/ping?_=' + Math.round(t), { cache: 'no-store' });
+    ui.myPing = Math.round(performance.now() - t);
+    paintMyPing();
+    api('hb', { ms: ui.myPing }, { quiet: true, retry: 0 });
+  } catch (e) { ui.myPing = null; paintMyPing(); }
+}
+function sessionOver(msg) {
+  if (es) es.close();
+  for (const id of [...peers.keys()]) closePeer(id);
+  session = null; st = null; store.del('mafia:session');
+  document.documentElement.classList.remove('night');
+  history.replaceState(null, '', location.pathname);
+  ui.inviteCode = null; ui.homeErr = msg || '';
+  renderHome();
+}
+
+/* =====================================================================================
+ * SMALL UI HELPERS
+ * ===================================================================================== */
+let toastTimer;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 3200); }
+const nameOf = id => { const p = st && st.players.find(x => x.id === id); return p ? p.name : '?'; };
+function inviteLink() { return `${location.origin}${location.pathname}?r=${session.code}`; }
+function summarizeRoles(n, s) {
+  const team = Math.max(1, Math.floor((n + 2) / 4)); const list = []; let mafia = team;
+  if (s.godfather && team >= 2) { list.push('godfather'); mafia--; }
+  for (let i = 0; i < mafia; i++) list.push('mafia');
+  if (n >= 5) list.push('detective'); if (n >= 6) list.push('doctor');
+  if (s.bodyguard && n >= 8) list.push('bodyguard'); if (s.vigilante && n >= 8) list.push('vigilante');
+  if (s.jester && n >= 7) list.push('jester'); if (s.serialkiller && n >= 9) list.push('serialkiller');
+  while (list.length < n) list.push('villager');
+  const c = {}; list.slice(0, n).forEach(r => c[r] = (c[r] || 0) + 1);
+  return Object.entries(c).map(([r, k]) => `${k} ${ROLES[r].name}${k > 1 ? (r === 'mafia' ? '' : 's') : ''}`).join(', ');
+}
+
+/* =====================================================================================
+ * HOME: name + voice first, then create or join
+ * ===================================================================================== */
+function renderHome() {
+  const inv = ui.inviteCode;
+  const prof = store.get('mafia:profile') || {};
+  if (!ui.name && prof.name) ui.name = prof.name;
+  if (prof.gender && !ui.genderSet) { ui.gender = prof.gender; ui.genderSet = true; }
+  const seg = [['male', 'Male voice'], ['female', 'Female voice'], ['neutral', 'Neutral']].map(g => `<button class="${ui.gender === g[0] ? 'on' : ''}" data-a="gender" data-v="${g[0]}">${g[1]}</button>`).join('');
+  const resume = store.get('mafia:session');
+  $('#app').innerHTML = `<div class="narrow stack">
+    <div class="top"><span class="brand">MAFIA</span><span class="small muted">online</span></div>
+    <div><h1 class="title">MAFIA</h1><div class="stamp">Somebody here is lying.</div>
+      <p class="lede">Play with friends online. No one has to moderate. The website runs the night, counts the votes and keeps the secrets.</p></div>
+    ${inv ? `<div class="panel"><p class="note">You’re invited</p><div class="code">${esc(inv)}</div><p class="muted" id="invStatus" style="margin:8px 0 0">Checking the room…</p></div>` : ''}
+    <div class="panel">
+      <p class="note">Who are you?</p>
+      <input id="name" type="text" maxlength="16" placeholder="Your name" autocomplete="off" value="${esc(ui.name)}" aria-label="Your name">
+      <p class="note" style="margin:14px 0 8px">Your typed messages are read aloud to everyone in this voice</p>
+      <div class="seg">${seg}</div>
+      <div style="margin-top:10px"><button class="btn quiet inline" data-a="preview" style="min-height:44px">▶ Preview my voice</button></div>
+      ${ui.homeErr ? `<p class="err" id="homeErr">${esc(ui.homeErr)}</p>` : '<p class="err" id="homeErr"></p>'}
+    </div>
+    ${inv ? `<div class="stack tight"><button class="btn primary big" data-a="join" data-need-name ${ui.name.trim() ? '' : 'disabled'}>Join room ${esc(inv)}</button>
+        <button class="btn quiet" data-a="clearInvite">Create my own room instead</button></div>`
+      : `<div class="stack tight"><button class="btn primary big" data-a="create" data-need-name ${ui.name.trim() ? '' : 'disabled'}>Create a room</button>
+        <div class="divider">or join a friend</div>
+        <div class="field"><input id="code" type="text" maxlength="5" placeholder="Room code" autocomplete="off" autocapitalize="characters" style="text-transform:uppercase;letter-spacing:.2em" aria-label="Room code"><button class="btn inline" data-a="joinCode" data-need-name style="width:auto;min-height:50px" ${ui.name.trim() ? '' : 'disabled'}>Join</button></div></div>`}
+    ${resume && !inv ? `<button class="btn quiet" data-a="resume">Rejoin your game (${esc(resume.code)})</button>` : ''}
+    <div class="panel"><p class="note">How it works</p><ul class="feat">
+      <li><span>🎭</span><span>Roles are dealt in secret. Only you see yours.</span></li>
+      <li><span>🌙</span><span>At night only the Mafia can talk, by voice or chat.</span></li>
+      <li><span>🎙</span><span>By day everyone alive can use their mic or type. Typed chat is read out loud.</span></li>
+      <li><span>📶</span><span>Everyone’s ping is shown under their name. Lag never gets you kicked. The game waits and you can rejoin.</span></li>
+    </ul></div></div>`;
+  if (inv) checkInvite(inv);
+}
+async function checkInvite(code) {
+  try {
+    const r = await fetch('/api/room', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+    const j = await r.json(); const el = $('#invStatus'); if (!el) return;
+    if (r.status === 404) { el.textContent = 'That room doesn’t exist (any more). Ask your friend for a new link.'; el.style.color = 'var(--bad)'; }
+    else if (j.started) { el.textContent = 'That game has already started.'; el.style.color = 'var(--bad)'; }
+    else el.textContent = `${j.players} player${j.players === 1 ? '' : 's'} waiting${j.full ? ' (room is full)' : ''}.`;
+  } catch (e) {}
+}
+function profile() { store.set('mafia:profile', { name: ui.name.trim(), gender: ui.gender }); }
+async function enter(path, body) {
+  profile();
+  ui.homeErr = '';
+  try {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok) { const el = $('#homeErr'); if (el) el.textContent = j.error || 'Could not join.'; return; }
+    session = { code: j.code, pid: j.pid, token: j.token }; store.set('mafia:session', session);
+    history.replaceState(null, '', `${location.pathname}?r=${j.code}`);
+    enterRoom();
+  } catch (e) { const el = $('#homeErr'); if (el) el.textContent = 'Could not reach the server.'; }
+}
+
+/* =====================================================================================
+ * ROOM
+ * ===================================================================================== */
+async function enterRoom() {
+  try { cfg = await (await fetch('/api/config')).json(); } catch (e) {}
+  st = null; pings = {}; ui.phaseKey = ''; ui.mainSig = '';
+  $('#app').innerHTML = `
+    <header class="rtop">
+      <button class="chip" id="codeChip" data-a="copyLink" title="Copy invite link"></button>
+      <span class="phase" id="phaseLbl"></span>
+      <span class="grow"></span>
+      <span class="pingchip" id="myping"></span>
+      <span class="timer" id="timer"></span>
+      <button class="iconbtn" id="micBtn" data-a="mic" aria-label="Microphone">🎙</button>
+      <button class="iconbtn" data-a="leaveAsk" aria-label="Leave game">✕</button>
+    </header>
+    <div id="banner"></div>
+    <div class="roomgrid">
+      <div class="colL"><section id="main"></section><section id="notes"></section><section id="players"></section></div>
+      <div class="colR"><section id="audio"></section>
+        <section class="chatbox"><div class="note" id="chLabel" style="margin:0"></div><div id="msgs" aria-live="polite"></div>
+          <form id="chatForm" autocomplete="off"><input id="chatInput" type="text" maxlength="300" placeholder="Message"><button type="submit">Send</button></form></section>
+      </div>
+    </div><div id="modal"></div>`;
+  $('#codeChip').textContent = 'Room ' + session.code;
+  $('#chatForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const inp = $('#chatInput'), text = inp.value.trim(); if (!text || inp.disabled) return;
+    inp.value = ''; api('chat', { text });
+  });
+  connect();
+  if (!ui.loops) {
+    ui.loops = true;
+    setInterval(heartbeat, 2000); heartbeat();
+    setInterval(tickTimer, 250);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { heartbeat(); resumeAudio(); } });
+  }
+}
+function onState(v) {
+  st = v; offset = v.now - Date.now();
+  const key = v.phase + ':' + v.night + ':' + (v.vote ? v.vote.round : 0);
+  if (key !== ui.phaseKey) { const first = !ui.phaseKey; ui.phaseKey = key; ui.detPick = null; if (!first) announce(v); }
+  ui.pendingSel = null;
+  document.documentElement.classList.toggle('night', v.phase === 'night' || v.phase === 'reveal');
+  renderTop(); renderMain(); renderPlayers(); renderNotes(); renderAudio(); renderChatMeta(); renderBanner();
+  syncPeers(); applyVoice();
+}
+function announce(v) {
+  const names = ids => ids.map(nameOf).join(' and ');
+  switch (v.phase) {
+    case 'reveal': narrate('The roles have been dealt. Look at your card.'); break;
+    case 'night': narrate(`Night ${v.night} falls. Everyone, close your eyes. Mafia, wake up.`); break;
+    case 'dawn': narrate(v.dawn && v.dawn.deaths.length ? `Morning. ${names(v.dawn.deaths.map(d => d.id))} did not wake up.` : 'Morning. Nobody died last night.'); break;
+    case 'day': narrate('Discussion time. Talk it out.'); break;
+    case 'vote': narrate(v.vote && v.vote.round === 2 ? 'Revote. Choose between the tied players.' : 'Voting begins. Choose who to eliminate.'); break;
+    case 'result': narrate(v.result && v.result.pid ? `${nameOf(v.result.pid)} has been voted out.` : 'Nobody was eliminated.'); break;
+    case 'over': narrate((v.winner && WIN[v.winner.key] ? WIN[v.winner.key].title : 'Game over') + '.'); break;
+  }
+}
+function tickTimer() {
+  const el = $('#timer'); if (!el || !st) return;
+  if (!st.phaseEnd) { el.textContent = ''; return; }
+  const left = Math.max(0, Math.ceil((st.phaseEnd - (Date.now() + offset)) / 1000));
+  el.textContent = Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
+  el.classList.toggle('low', left <= 10);
+}
+function renderTop() {
+  const lbl = $('#phaseLbl'); if (!lbl || !st) return;
+  lbl.textContent = (PHASE_LABEL[st.phase] || '') + (st.phase === 'night' || st.phase === 'day' ? ' ' + st.night : '');
+  const mic = $('#micBtn'); mic.textContent = ui.micOn ? '🎙' : '🔇'; mic.classList.toggle('on', ui.micOn);
+  tickTimer(); paintMyPing();
+}
+function renderBanner() {
+  const b = $('#banner'); if (!b) return;
+  b.innerHTML = ui.online ? '' : '<div class="banner">Reconnecting… your seat is safe and the game is waiting for you.</div>';
+}
+function paintMyPing() {
+  const el = $('#myping'); if (!el) return;
+  const ms = ui.myPing;
+  el.textContent = ms == null ? 'offline' : ms + ' ms';
+  el.style.color = ms == null || ms >= (st ? st.highMs : 250) ? 'var(--bad)' : ms >= 120 ? 'var(--warn)' : 'var(--good)';
+}
+function paintPings() {
+  if (!st) return;
+  for (const p of st.players) {
+    const el = document.querySelector(`[data-ping="${p.id}"]`); if (!el) continue;
+    const i = pings[p.id];
+    let txt = '…', cls = 'ping';
+    if (i) {
+      if (i.left) txt = 'left the game';
+      else if (!i.c) { txt = 'reconnecting…'; cls += ' bad'; }
+      else if (i.st) { txt = 'unstable connection'; cls += ' warn'; }
+      else if (i.ms == null) txt = '… ms';
+      else { txt = i.ms + ' ms'; if (i.ms >= st.highMs) { txt += ' · high ping'; cls += ' bad'; } else if (i.ms >= 120) cls += ' warn'; else cls += ' good'; }
+    }
+    el.textContent = txt; el.className = cls;
+  }
+}
+
+/* ---------- main panel ---------- */
+function connectedCount() { return st.players.filter(p => p.connected).length; }
+function renderMain(force) {
+  const sig = JSON.stringify([st.phase, st.night, st.settings, st.hostId, st.players.length, connectedCount(), st.players.map(p => [p.id, p.alive, p.ready, p.role]), st.you, st.ready, st.vote, st.dawn, st.result, st.winner, ui.detPick, ui.pendingSel]);
+  if (!force && sig === ui.mainSig) return;
+  ui.mainSig = sig;
+  $('#main').innerHTML = mainHTML();
+}
+function mainHTML() {
+  switch (st.phase) {
+    case 'lobby': return lobbyHTML();
+    case 'reveal': return revealHTML();
+    case 'night': return nightHTML();
+    case 'dawn': return dawnHTML();
+    case 'day': return dayHTML();
+    case 'vote': return voteHTML();
+    case 'result': return resultHTML();
+    case 'over': return overHTML();
+  }
+  return '';
+}
+function lobbyHTML() {
+  const s = st.settings, host = st.meId === st.hostId, n = st.players.length;
+  const sw = (k, label, sub) => `<div class="row"><div><div class="rn">${label}</div><div class="muted small">${sub}</div></div><button class="sw" role="switch" aria-checked="${!!s[k]}" aria-label="${label}" data-a="set" data-k="${k}" ${host ? '' : 'disabled'}></button></div>`;
+  const sel = (k, label, opts) => `<div class="row"><div class="rn">${label}</div><select data-s="${k}" ${host ? '' : 'disabled'} aria-label="${label}">${opts.map(o => `<option value="${o}" ${+s[k] === o ? 'selected' : ''}>${o >= 60 ? (o % 60 ? Math.floor(o / 60) + 'm ' + (o % 60) + 's' : o / 60 + ' min') : o + ' s'}</option>`).join('')}</select></div>`;
+  const tie = [['none', 'No elimination'], ['revote', 'Revote'], ['random', 'Random']].map(t => `<button class="${s.tie === t[0] ? 'on' : ''}" data-a="setTie" data-v="${t[0]}" ${host ? '' : 'disabled'}>${t[1]}</button>`).join('');
+  const need = st.minPlayers - connectedCount();
+  return `<div class="stack">
+    <div class="panel"><p class="note">Invite friends</p>
+      <div class="code">${esc(st.code)}</div>
+      <div class="linkbox"><input type="text" id="linkBox" readonly value="${esc(inviteLink())}" aria-label="Invite link"><button class="btn" data-a="copyLink">Copy</button>${navigator.share ? '<button class="btn" data-a="share">Share</button>' : ''}</div>
+      <p class="muted small" style="margin:10px 0 0">Friends open the link, pick a name and a voice, and they’re in. ${n}/${st.maxPlayers} players.</p></div>
+    <div class="panel"><p class="note">Roles for ${n} players</p><p style="margin:0"><b>${esc(summarizeRoles(n, s))}</b></p>
+      <p class="muted small" style="margin:6px 0 0">Roles are dealt by the server when the game starts.</p></div>
+    <details class="panel"${host ? ' open' : ''}><summary class="rn" style="cursor:pointer;min-height:32px">Game settings ${host ? '' : '(host only)'}</summary>
+      <div style="margin-top:8px">
+      ${sw('godfather', 'Godfather', 'Appears innocent to the Detective (needs 2+ Mafia).')}
+      ${sw('bodyguard', 'Bodyguard', 'Dies in place of the player they guard (8+ players).')}
+      ${sw('vigilante', 'Vigilante', 'One bullet for the game (8+ players).')}
+      ${sw('jester', 'Jester', 'Wins by getting voted out (7+ players).')}
+      ${sw('serialkiller', 'Serial Killer', 'Kills every night, plays alone (9+ players).')}
+      ${sw('reveal', 'Reveal roles of the dead', 'Everyone learns the role of anyone eliminated.')}
+      ${sw('selfHeal', 'Doctor can protect themselves', '')}
+      <div class="row" style="display:block"><div class="rn" style="margin-bottom:8px">If a vote is tied</div><div class="seg">${tie}</div></div>
+      ${sel('nightSec', 'Night length', [30, 45, 60, 90, 120])}
+      ${sel('daySec', 'Discussion length', [60, 90, 150, 240, 300, 420])}
+      ${sel('voteSec', 'Voting length', [20, 30, 45, 60, 90])}
+      </div></details>
+    ${host ? `<button class="btn primary big" data-a="start" ${need > 0 ? 'disabled' : ''}>${need > 0 ? `Need ${need} more player${need > 1 ? 's' : ''}` : 'Start the game'}</button>`
+      : `<div class="panel center"><p style="margin:0">Waiting for <b>${esc(nameOf(st.hostId))}</b> to start the game…</p></div>`}
+  </div>`;
+}
+function revealHTML() {
+  const y = st.you, r = ROLES[y.role]; if (!r) return '';
+  const mates = isM(y.role) ? st.players.filter(p => p.id !== st.meId && isM(p.role)) : [];
+  return `<div class="panel center stack tight"><div class="note">You are the</div><div class="roleicon">${r.icon}</div><div class="rolename">${r.name}</div><div><span class="teamtag">${r.team}</span></div><p>${r.blurb}</p>
+    ${isM(y.role) ? `<div class="script">Your team: <b>${mates.length ? mates.map(m => esc(m.name) + (m.role === 'godfather' ? ' 👑' : '')).join(', ') : 'you are the only Mafia'}</b></div>` : ''}
+    <p class="muted small" style="margin:0">Night falls soon. Keep your role secret.</p></div>`;
+}
+function nightHTML() {
+  const y = st.you, a = y.action;
+  if (!y.alive) return `<div class="panel center stack tight"><div class="roleicon sm">🪦</div><h2 class="h2">You are out</h2><p class="muted">Ghosts can talk to other ghosts. The living can’t hear you.</p></div>`;
+  if (!a) return '';
+  const m = META[a.kind];
+  let body = '';
+  if (a.kind === 'mafia') {
+    const picks = Object.entries(a.team || {}).map(([id, t]) => `${esc(nameOf(id))} → ${t === 'hold' ? 'nobody' : esc(nameOf(t))}`);
+    body = `<p class="muted">Tap a player below. Your team’s picks:</p><div class="script">${picks.length ? picks.join('<br>') : 'no picks yet'}</div>`;
+  } else if (a.kind === 'detective') {
+    if (a.locked) body = `<div class="script">You investigated <b>${esc(nameOf(a.selected))}</b>. See your notes below.</div>`;
+    else if (ui.detPick) body = `<button class="btn primary big" data-a="detConfirm">Investigate ${esc(nameOf(ui.detPick))}</button>`;
+    else body = '<p class="muted">Tap a player below.</p>';
+  } else if (a.kind === 'vigilante') {
+    body = `<p class="muted">Tap a player to shoot, or hold your fire.</p><button class="btn ${a.selected === 'hold' ? 'primary' : ''}" data-a="hold">Hold fire</button>${a.selected && a.selected !== 'hold' ? `<div class="script" style="margin-top:10px">Aiming at <b>${esc(nameOf(a.selected))}</b></div>` : ''}`;
+  } else if (a.kind === 'decoy') {
+    body = '';
+  } else {
+    body = a.selected ? `<div class="script">Your choice: <b>${esc(nameOf(a.selected))}</b> (tap someone else to change)</div>` : '<p class="muted">Tap a player below.</p>';
+  }
+  return `<div class="panel center stack tight"><div class="roleicon sm">${m.icon}</div><h2 class="h2">${m.title}</h2><p class="muted">${m.sub}</p>${body}</div>`;
+}
+function dawnHTML() {
+  const d = st.dawn ? st.dawn.deaths : [];
+  return `<div class="stack"><div class="panel center"><div class="roleicon sm">🌅</div><h2 class="h2">Morning</h2><p class="muted" style="margin:0">${d.length ? (d.length === 1 ? 'Someone did not wake up.' : d.length + ' players did not wake up.') : 'Everyone woke up. Nobody died last night.'}</p></div>
+    ${d.map(x => `<div class="panel"><b style="font-size:20px">${esc(nameOf(x.id))}</b><div class="muted">${x.role ? 'They were the ' + ROLES[x.role].name + '.' : 'Their role stays secret.'}</div></div>`).join('')}</div>`;
+}
+function dayHTML() {
+  const r = st.ready || { count: 0, need: 1 }, me = st.players.find(p => p.id === st.meId);
+  return `<div class="panel center stack tight"><div class="roleicon sm">☀️</div><h2 class="h2">Discuss. Accuse. Defend.</h2>
+    <p class="muted">${st.you.alive ? 'Talk on your mic or type in the chat. Then vote someone out.' : 'You are out. You can watch and chat with other ghosts.'}</p>
+    ${st.you.alive ? `<button class="btn ${me && me.ready ? 'primary' : ''}" data-a="ready">${me && me.ready ? 'You’re ready to vote' : 'I’m ready to vote'} (${r.count}/${r.need})</button><p class="muted small" style="margin:0">Voting starts early when most living players are ready.</p>` : ''}</div>`;
+}
+function voteHTML() {
+  const v = st.vote, mine = v.votes[st.meId], counted = Object.keys(v.votes).length;
+  return `<div class="panel center stack tight"><div class="roleicon sm">⚖️</div><h2 class="h2">${v.round === 2 ? 'Revote' : 'Who is eliminated?'}</h2>
+    ${st.you.alive ? `<p class="muted">Tap a player below to vote. Tap again to take it back.</p>
+      <div class="two"><button class="btn ${mine === 'skip' ? 'primary' : ''}" data-a="skip">Skip vote</button><button class="btn quiet" data-a="clearVote">Clear my vote</button></div>
+      <p class="muted small" style="margin:0">${mine ? (mine === 'skip' ? 'You are skipping.' : 'You voted for ' + esc(nameOf(mine)) + '.') : 'You haven’t voted yet.'} ${counted} vote${counted === 1 ? '' : 's'} in.</p>`
+      : '<p class="muted">You are out. Only the living vote.</p>'}</div>`;
+}
+function resultHTML() {
+  const r = st.result || {};
+  const counts = Object.entries(r.counts || {}).sort((a, b) => b[1] - a[1]).map(([id, n]) => `${esc(nameOf(id))}: ${n}`).concat(r.skip ? [`Skip: ${r.skip}`] : []);
+  return `<div class="panel center stack tight"><div class="roleicon sm">${r.pid ? (r.role ? ROLES[r.role].icon : '🪦') : '⚖️'}</div>
+    <h2 class="h2">${r.pid ? esc(nameOf(r.pid)) + ' is out' : 'No elimination'}</h2>
+    <p class="muted">${r.pid ? (r.role ? 'They were the ' + ROLES[r.role].name + '.' : 'Their role stays secret.') : ''} ${esc(r.note || '')}</p>
+    ${counts.length ? `<div class="script">${counts.join(' · ')}</div>` : ''}<p class="muted small" style="margin:0">Night falls next.</p></div>`;
+}
+function overHTML() {
+  const w = st.winner || { key: 'draw' }, base = WIN[w.key] || WIN.draw, host = st.meId === st.hostId;
+  const text = w.key === 'jester' && w.name ? `${w.name} got themselves voted out.` : base.text;
+  const roster = st.recap.roster.map(r => `<div class="rosterrow ${r.alive ? '' : 'out'}"><span>${esc(r.name)}${r.alive ? '' : ' (out)'}</span><span>${ROLES[r.role] ? ROLES[r.role].icon + ' ' + ROLES[r.role].name : ''}</span></div>`).join('');
+  const log = st.recap.log.map(l => `<li><b>${esc(l.label)}</b> ${esc(l.text)}</li>`).join('');
+  return `<div class="stack">
+    <div class="panel center"><div class="roleicon">${base.icon}</div><h1 class="h1">${base.title}</h1><p class="muted" style="margin:8px 0 0">${esc(text)}</p></div>
+    <div class="panel"><p class="note">Who was who</p>${roster}</div>
+    <div class="panel"><p class="note">What happened</p>${log ? `<ul class="log">${log}</ul>` : '<p class="muted" style="margin:0">Nothing to report.</p>'}</div>
+    ${host ? '<button class="btn primary big" data-a="again">Play again with this group</button>' : `<div class="panel center"><p style="margin:0">Waiting for <b>${esc(nameOf(st.hostId))}</b> to start another round…</p></div>`}</div>`;
+}
+function renderNotes() {
+  const el = $('#notes'); if (!el) return;
+  const det = st.you.det || [];
+  el.innerHTML = det.length ? `<div class="panel"><p class="note">Your investigations</p>${det.map(d => `<div class="rosterrow"><span>Night ${d.night}: ${esc(nameOf(d.target))}</span><span class="verdict ${d.mafia ? 'bad' : 'good'}">${d.mafia ? 'MAFIA' : 'NOT MAFIA'}</span></div>`).join('')}</div>` : '';
+}
+
+/* ---------- players ("the table") ---------- */
+function targetInfo() {
+  const none = { ids: new Set(), selected: null };
+  if (!st || !st.you.alive) return none;
+  if (st.phase === 'night' && st.you.action && st.you.action.kind !== 'decoy') {
+    const a = st.you.action, sel = a.selected === 'hold' ? null : a.selected;
+    if (a.locked) return { ids: new Set(), selected: sel };
+    return { ids: new Set(a.options), selected: ui.pendingSel || ui.detPick || sel };
+  }
+  if (st.phase === 'vote') {
+    const mine = st.vote.votes[st.meId];
+    return { ids: new Set(st.vote.cands.filter(id => id !== st.meId)), selected: ui.pendingSel || (mine && mine !== 'skip' ? mine : null) };
+  }
+  return none;
+}
+function renderPlayers() {
+  const el = $('#players'); if (!el) return;
+  const t = targetInfo();
+  const cards = st.players.map(p => {
+    const me = p.id === st.meId, role = p.role ? ROLES[p.role] : null;
+    const cls = ['pl']; if (!p.alive) cls.push('dead'); if (me) cls.push('me'); if (t.ids.has(p.id)) cls.push('tgt'); if (t.selected === p.id) cls.push('sel');
+    const vcount = st.phase === 'vote' ? Object.values(st.vote.votes).filter(x => x === p.id).length : 0;
+    const casts = st.phase === 'vote' && st.vote.votes[p.id] ? `<span class="vtag">→ ${st.vote.votes[p.id] === 'skip' ? 'skip' : esc(nameOf(st.vote.votes[p.id]))}</span>` : '';
+    return `<div class="${cls.join(' ')}" data-a="pl" data-id="${p.id}" data-pl="${p.id}"${t.ids.has(p.id) ? ' role="button" tabindex="0"' : ''}>
+      <span class="av" style="background:${esc(p.color)}">${esc((p.name[0] || '?').toUpperCase())}</span>
+      <span class="nm">${esc(p.name)}${p.host ? ' ★' : ''}${me ? ' (you)' : ''}</span>
+      <span class="ping" data-ping="${p.id}"></span>
+      ${role ? `<span class="rtag">${role.icon} ${role.name}</span>` : (!p.alive && st.phase !== 'lobby' ? '<span class="rtag">🪦 out</span>' : '')}
+      ${vcount ? `<span class="vtag">${vcount} vote${vcount > 1 ? 's' : ''}</span>` : ''}${casts}
+      ${st.phase === 'day' && p.ready ? '<span class="vtag">ready</span>' : ''}</div>`;
+  }).join('');
+  el.innerHTML = `<p class="note">Players (${st.players.filter(p => p.alive).length} alive)</p><div class="pgrid">${cards}</div>`;
+  paintPings();
+}
+function onPlayerClick(id) {
+  const t = targetInfo(); if (!t.ids.has(id)) return;
+  if (st.phase === 'night') {
+    if (st.you.action.kind === 'detective') { ui.detPick = id; renderMain(); renderPlayers(); return; }
+    ui.pendingSel = id; renderPlayers(); api('night', { target: id });
+  } else if (st.phase === 'vote') {
+    const mine = st.vote.votes[st.meId];
+    if (mine === id) { ui.pendingSel = null; api('vote', { target: null }); return; }
+    ui.pendingSel = id; renderPlayers(); api('vote', { target: id });
+  }
+}
+
+/* ---------- voice + audio panel ---------- */
+function voiceLine() {
+  const ph = st.phase, alive = st.you.alive;
+  if (ph === 'lobby' || ph === 'reveal' || ph === 'over') return ['🎙', 'Everyone can hear you.'];
+  if (ph === 'night') {
+    if (alive && isM(st.you.role)) return ['🕶️', 'Mafia line. Only your team can hear you.'];
+    if (!alive) return ['🪦', 'Ghost line. Only other ghosts hear you.'];
+    return ['🌙', 'You’re asleep. Voice is off until morning.'];
+  }
+  return alive ? ['🎙', 'Town voice. Every living player can hear you.'] : ['🪦', 'Ghost line. Only other ghosts hear you.'];
+}
+function renderAudio() {
+  const el = $('#audio'); if (!el || !st) return;
+  const vl = voiceLine();
+  const micLabel = !voice.stream ? 'Turn on microphone' : ui.micOn ? 'Mic on. Tap to mute' : 'Mic muted. Tap to unmute';
+  const swRow = (k, label, sub, on) => `<div class="row"><div><div class="rn">${label}</div><div class="muted small">${sub}</div></div><button class="sw" role="switch" aria-checked="${on}" aria-label="${label}" data-a="${k}"></button></div>`;
+  el.innerHTML = `<div class="panel"><p class="note">Voice and sound</p>
+    <p style="margin:0 0 10px"><b>${vl[0]} ${vl[1]}</b></p>
+    <button class="btn ${ui.micOn ? '' : 'primary'}" data-a="mic">${micLabel}</button>
+    ${ui.audioBlocked ? '<button class="btn quiet" data-a="unblock" style="margin-top:10px">Tap to hear other players</button>' : ''}
+    ${TTS.ok ? swRow('tts', 'Read chat aloud', 'Typed messages are spoken in the sender’s chosen voice.', ui.ttsOn) + swRow('narr', 'Narrator', 'The game announces nights, deaths and votes.', ui.narratorOn) : ''}</div>`;
+}
+
+/* ---------- chat ---------- */
+function renderChatMeta() {
+  const lab = $('#chLabel'), inp = $('#chatInput'), btn = $('#chatForm button'); if (!lab) return;
+  const ch = st.channel;
+  const names = { all: st.phase === 'lobby' ? 'Lobby chat' : 'Town chat', mafia: '🕶️ Mafia chat (only your team sees this)', dead: '🪦 Ghost chat (only ghosts see this)' };
+  lab.textContent = ch ? names[ch] : '🌙 Everyone is asleep. Chat is closed until morning.';
+  inp.disabled = !ch; btn.disabled = !ch;
+  inp.placeholder = ch ? 'Type a message. It will be read aloud.' : 'Chat is closed';
+}
+function addMsg(m, live) {
+  const box = $('#msgs'); if (!box) return;
+  const near = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  const div = document.createElement('div');
+  if (m.ch === 'sys') { div.className = 'msg sys'; div.textContent = m.text; }
+  else {
+    const p = st && st.players.find(x => x.id === m.from);
+    div.className = 'msg ' + m.ch;
+    const who = document.createElement('span'); who.className = 'who'; who.style.color = p ? p.color : 'inherit'; who.textContent = m.name + ': ';
+    const tx = document.createElement('span'); tx.textContent = m.text;
+    div.append(who, tx);
+  }
+  box.appendChild(div);
+  while (box.children.length > 200) box.removeChild(box.firstChild);
+  if (near || !live) box.scrollTop = box.scrollHeight;
+  if (live && m.ch !== 'sys' && ui.ttsOn && st && m.from !== st.meId) speak(`${m.name} says: ${m.text}`, m.gender);
+}
+
+/* =====================================================================================
+ * EVENTS
+ * ===================================================================================== */
+function modal(html) { $('#modal').innerHTML = html ? `<div class="scrim"><div class="modal stack tight">${html}</div></div>` : ''; }
+async function copy(text) {
+  try { await navigator.clipboard.writeText(text); toast('Invite link copied'); }
+  catch (e) { const b = $('#linkBox'); if (b) { b.select(); document.execCommand && document.execCommand('copy'); } toast('Link ready to copy'); }
+}
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-a]'); if (!t || t.disabled) return;
+  const a = t.dataset.a, d = t.dataset;
+  switch (a) {
+    case 'gender': ui.gender = d.v; profile(); document.querySelectorAll('.seg [data-a="gender"]').forEach(b => b.classList.toggle('on', b.dataset.v === d.v)); break;
+    case 'preview': speak(`Hi${ui.name.trim() ? ', I’m ' + ui.name.trim() : ''}. This is how your messages will sound.`, ui.gender, true); if (!TTS.ok) toast('This browser can’t read text aloud.'); break;
+    case 'create': enter('/api/create', { name: ui.name.trim(), gender: ui.gender }); break;
+    case 'join': enter('/api/join', { code: ui.inviteCode, name: ui.name.trim(), gender: ui.gender }); break;
+    case 'joinCode': { const c = ($('#code').value || '').trim().toUpperCase(); if (!c) { $('#homeErr').textContent = 'Enter the room code from your friend.'; break; } enter('/api/join', { code: c, name: ui.name.trim(), gender: ui.gender }); break; }
+    case 'clearInvite': ui.inviteCode = null; history.replaceState(null, '', location.pathname); renderHome(); break;
+    case 'resume': { const s = store.get('mafia:session'); if (s) { session = s; resumeSession(); } break; }
+    case 'copyLink': copy(inviteLink()); break;
+    case 'share': navigator.share({ title: 'Join my Mafia game', text: `Join my Mafia game. Room ${session.code}`, url: inviteLink() }).catch(() => {}); break;
+    case 'set': api('settings', { settings: { [d.k]: !st.settings[d.k] } }); break;
+    case 'setTie': api('settings', { settings: { tie: d.v } }); break;
+    case 'start': api('start'); break;
+    case 'again': api('again'); break;
+    case 'pl': onPlayerClick(d.id); break;
+    case 'detConfirm': if (ui.detPick) { const id = ui.detPick; ui.detPick = null; api('night', { target: id }); } break;
+    case 'hold': api('night', { target: 'hold' }); break;
+    case 'ready': api('ready'); break;
+    case 'skip': api('vote', { target: 'skip' }); break;
+    case 'clearVote': api('vote', { target: null }); break;
+    case 'mic': toggleMic(); break;
+    case 'unblock': resumeAudio(); ui.audioBlocked = false; renderAudio(); break;
+    case 'tts': ui.ttsOn = !ui.ttsOn; if (!ui.ttsOn && TTS.ok) { TTS.queue.length = 0; speechSynthesis.cancel(); } renderAudio(); break;
+    case 'narr': ui.narratorOn = !ui.narratorOn; renderAudio(); break;
+    case 'leaveAsk': modal('<h3 class="h3">Leave this game?</h3><p class="muted">If the game has started, your seat stays but you’ll no longer take part. If you just lost connection, refresh instead. You’ll rejoin automatically.</p><div class="two"><button class="btn" data-a="leaveNo">Stay</button><button class="btn primary" data-a="leaveYes">Leave</button></div>'); break;
+    case 'leaveNo': modal(''); break;
+    case 'leaveYes': modal(''); api('leave', {}, { quiet: true, retry: 1 }).then(() => sessionOver('')); break;
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.id === 'code') { const b = document.querySelector('[data-a="joinCode"]'); if (b && !b.disabled) b.click(); }
+  if (e.key === 'Enter' && e.target.id === 'name') { const b = document.querySelector('[data-a="create"],[data-a="join"]'); if (b && !b.disabled) b.click(); }
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('pl') && e.target.classList.contains('tgt')) { e.preventDefault(); onPlayerClick(e.target.dataset.id); }
+});
+document.addEventListener('input', e => {
+  if (e.target.id === 'name') {
+    ui.name = e.target.value;
+    document.querySelectorAll('[data-need-name]').forEach(b => { b.disabled = !ui.name.trim(); });
+  }
+  if (e.target.id === 'code') e.target.value = e.target.value.toUpperCase().replace(/[^A-Z]/g, '');
+});
+document.addEventListener('change', e => {
+  const k = e.target.dataset && e.target.dataset.s;
+  if (k) api('settings', { settings: { [k]: +e.target.value } });
+});
+
+/* =====================================================================================
+ * BOOT
+ * ===================================================================================== */
+async function resumeSession() {
+  try {
+    const r = await fetch('/api/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(session) });
+    if (r.ok) { history.replaceState(null, '', `${location.pathname}?r=${session.code}`); return enterRoom(); }
+  } catch (e) { /* server unreachable: fall through to the home page, session is kept for retry */ }
+  session = null; renderHome();
+}
+function boot() {
+  const q = new URLSearchParams(location.search);
+  const code = (q.get('r') || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 5);
+  const saved = store.get('mafia:session');
+  if (saved && (!code || code === saved.code)) { session = saved; resumeSession(); return; }
+  ui.inviteCode = code || null;
+  renderHome();
+}
+boot();
+</script>
+</body>
+</html>

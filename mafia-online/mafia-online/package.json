@@ -1,0 +1,13 @@
+{
+  "name": "mafia-online",
+  "version": "1.0.0",
+  "description": "Play Mafia online with friends. The server is the moderator. Voice chat, read-aloud text chat, live ping.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "engines": { "node": ">=18" },
+  "license": "MIT",
+  "private": true
+}
