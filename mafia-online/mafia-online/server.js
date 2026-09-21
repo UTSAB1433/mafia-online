@@ -46,6 +46,52 @@ const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { c
 const pickOne = a => a[crypto.randomInt(a.length)];
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(+v) || lo));
 
+/* ------------------------------------------------------------------ player condition (foundation for Phase 1+)
+ * Every player has a `condition` alongside the legacy `alive` boolean. `alive` stays in sync
+ * (alive === condition !== 'dead') so nothing that already reads `alive` needs to change.
+ * Phase 1 (attack outcomes) will start writing 'mediocre' / 'critical' instead of jumping
+ * straight to 'dead'; nothing does that yet, so behavior today is unchanged.
+ */
+const CONDITIONS = ['good', 'mediocre', 'critical', 'dead'];
+function setCondition(p, cond) {
+  if (!CONDITIONS.includes(cond)) throw new Error(`Unknown condition: ${cond}`);
+  p.condition = cond;
+  p.alive = cond !== 'dead';       // keep every existing `alive`-based check correct
+}
+
+/* ------------------------------------------------------------------ case file (foundation for Phase 2+)
+ * A room-scoped, append-only record. Nothing writes to it yet — Phase 2 (formal claims,
+ * testimony, contradictions) is what actually populates it — but the shape needs to exist
+ * now so every later phase (and reconnect/view logic) is built against it from day one.
+ */
+function newCaseFile() { return { entries: [] }; }
+function addCaseEntry(room, entry) {
+  const e = { id: rid(4), ts: now(), ...entry };
+  room.caseFile.entries.push(e);
+  return e;
+}
+
+/* ------------------------------------------------------------------ clue pipeline (foundation for Phase 1+)
+ * A single, tunable source of "how much does this event reveal?" so the newspaper,
+ * Detective, and Watcher (added in later phases) all draw from the same weighted logic
+ * instead of each system inventing its own probability. Nothing calls this yet.
+ */
+const CLUE_TIERS = ['clear', 'weak', 'indirect', 'ambiguous', 'none'];
+const DEFAULT_CLUE_WEIGHTS = { clear: 0.30, weak: 0.25, indirect: 0.20, ambiguous: 0.15, none: 0.10 };
+function pickWeighted(weights) {
+  const entries = Object.entries(weights).filter(([, w]) => w > 0);
+  const total = entries.reduce((s, [, w]) => s + w, 0);
+  let r = Math.random() * total;
+  for (const [key, w] of entries) { r -= w; if (r <= 0) return key; }
+  return entries.length ? entries[entries.length - 1][0] : 'none';
+}
+// context: { kind: string, weights?: partial override of DEFAULT_CLUE_WEIGHTS }
+// returns: { tier, kind } — callers attach their own tier-specific wording.
+function generateClue(context = {}) {
+  const weights = { ...DEFAULT_CLUE_WEIGHTS, ...(context.weights || {}) };
+  return { tier: pickWeighted(weights), kind: context.kind || 'general' };
+}
+
 /* ------------------------------------------------------------------ rooms & players */
 function makeCode() {
   const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -60,7 +106,7 @@ function newPlayer(room, name, gender) {
   const color = COLORS.find(c => !used.has(c)) || COLORS[room.players.size % COLORS.length];
   const p = { id: rid(4), token: rid(16), name, gender: ['male', 'female', 'neutral'].includes(gender) ? gender : 'neutral', color,
     connected: false, res: null, lastSeen: now(), lostAt: 0, lostNotice: false, ping: null, highNoticeAt: 0,
-    alive: true, role: null, bullets: 0, left: false, ready: false, det: [], chatTimes: [], sigTimes: [], sigQueue: [] };
+    alive: true, condition: 'good', role: null, bullets: 0, left: false, ready: false, det: [], chatTimes: [], sigTimes: [], sigQueue: [] };
   room.players.set(p.id, p); room.order.push(p.id);
   return p;
 }
@@ -68,7 +114,8 @@ function createRoom(name, gender) {
   const code = makeCode();
   const room = { code, players: new Map(), order: [], hostId: null, phase: 'lobby', settings: { ...DEFAULTS }, night: 0,
     timer: null, phaseStart: now(), phaseEnd: 0, extended: false, picks: {}, votes: {}, voteCands: [], voteRound: 1,
-    dawn: null, result: null, winner: null, log: [], chat: [], lastActive: now(), jesterWin: null };
+    dawn: null, result: null, winner: null, log: [], chat: [], lastActive: now(), jesterWin: null,
+    caseFile: newCaseFile(), evidence: [] };
   const p = newPlayer(room, name, gender);
   room.hostId = p.id;
   rooms.set(code, room);
@@ -155,7 +202,7 @@ function view(room, p) {
         connected: q.connected && !q.left, left: q.left, ping: q.ping, stale: q.connected && now() - q.lastSeen > STALE_MS,
         role: inGame ? visibleRole(room, p, q) : null, ready: room.phase === 'day' ? q.ready : false };
     }),
-    you: { role: p.role, alive: p.alive, bullets: p.bullets, det: p.det, action: null },
+    you: { role: p.role, alive: p.alive, condition: p.condition, bullets: p.bullets, det: p.det, action: null },
     channel: chatChannel(room, p), voice: voicePolicy(room, p)
   };
   if (room.phase === 'night' && p.alive) {
@@ -229,7 +276,7 @@ function setPhase(room, phase, sec) {
 function startGame(room) {
   const seated = [...room.players.values()].filter(p => !p.left);
   const roles = composeRoles(seated.length, room.settings);
-  seated.forEach((p, i) => { p.role = roles[i]; p.alive = true; p.bullets = p.role === 'vigilante' ? 1 : 0; p.det = []; });
+  seated.forEach((p, i) => { p.role = roles[i]; setCondition(p, 'good'); p.bullets = p.role === 'vigilante' ? 1 : 0; p.det = []; });
   room.gameNo = (room.gameNo || 0) + 1;
   room.night = 0; room.log = []; room.winner = null; room.jesterWin = null; room.dawn = null; room.result = null;
   sys(room, 'The roles have been dealt. Check yours.');
@@ -331,7 +378,7 @@ function resolveNight(room) {
   if (!attacks.length) notes.push('Nobody was attacked.');
   notes.forEach(text => room.log.push({ label: `Night ${n}`, text }));
   const deaths = [...dead].map(id => P.get(id));
-  deaths.forEach(p => { p.alive = false; });
+  deaths.forEach(p => setCondition(p, 'dead'));
   room.dawn = { deaths: deaths.map(p => ({ id: p.id, role: room.settings.reveal ? p.role : null })), saves, notices };
   setPhase(room, 'dawn', T(Math.min(22, 4.5 + 3.6 * (deaths.length + saves.length))));   // long enough for the morning scenes
 }
@@ -379,7 +426,7 @@ function tally(room) {
     return startVote(room, top, 2);
   } else if (room.settings.tie === 'random') { victim = pickOne(top); note = 'The vote was tied, so one tied player was picked at random.'; }
   else return none('The vote was tied. Nobody is eliminated.');
-  const v = P.get(victim); v.alive = false;
+  const v = P.get(victim); setCondition(v, 'dead');
   room.log.push({ label: `Day ${room.night}`, text: `${v.name} was voted out (${v.role}).` });
   if (v.role === 'jester') room.jesterWin = v;
   room.result = { pid: v.id, role: (room.settings.reveal || v.role === 'jester') ? v.role : null, note, ...snapshot };
@@ -462,7 +509,7 @@ function handleAct(room, p, b) {
     case 'again': {
       if (p.id !== room.hostId || room.phase !== 'over') return { error: 'Not available.' };
       clearTimeout(room.timer);
-      for (const q of room.players.values()) { q.role = null; q.alive = true; q.bullets = 0; q.det = []; q.ready = false; }
+      for (const q of room.players.values()) { q.role = null; setCondition(q, 'good'); q.bullets = 0; q.det = []; q.ready = false; }
       room.phase = 'lobby'; room.phaseStart = now(); room.phaseEnd = 0; room.winner = null; room.night = 0;
       sys(room, 'Back in the lobby.'); pushState(room); return { ok: true };
     }
@@ -631,4 +678,4 @@ setInterval(() => {
 if (require.main === module) {
   server.listen(PORT, () => console.log(`Mafia online listening on http://localhost:${PORT}`));
 }
-module.exports = { server, rooms, composePlan, autoTeam, maxTeam };
+module.exports = { server, rooms, composePlan, autoTeam, maxTeam, generateClue, CLUE_TIERS, CONDITIONS, addCaseEntry };
