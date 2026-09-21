@@ -4,7 +4,7 @@
 process.env.FAST = '1';
 const http = require('http');
 const assert = require('assert');
-const { server, rooms } = require('./server');
+const { server, rooms, generateClue, CLUE_TIERS, CONDITIONS } = require('./server');
 
 const PORT = 3999;
 const base = { hostname: '127.0.0.1', port: PORT };
@@ -60,6 +60,13 @@ class Bot {
       if (p.id === s.meId || p.role == null || s.phase === 'over') continue;
       const teammate = myMafia && (p.role === 'mafia' || p.role === 'godfather');
       if (p.alive && !teammate) { this.sawRolesLeak = true; }
+      // Phase 0 foundation: `condition` is not yet broadcast to other players, only to yourself.
+      if ('condition' in p) this.sawConditionLeak = true;
+    }
+    // My own condition should always be present, valid, and in sync with `alive`.
+    if (s.you.condition != null) {
+      if (!CONDITIONS.includes(s.you.condition)) this.badCondition = true;
+      if ((s.you.condition === 'dead') !== !s.you.alive) this.badCondition = true;
     }
   }
   react(s) {
@@ -91,7 +98,20 @@ async function until(fn, ms = 20000, what = 'condition') {
   throw new Error('timeout waiting for ' + what);
 }
 
+function testCluePipeline() {
+  // Every draw must be one of the declared tiers, and skewed weights should visibly bias the outcome.
+  const counts = {};
+  for (let i = 0; i < 4000; i++) { const c = generateClue({ kind: 'attack' }); assert.ok(CLUE_TIERS.includes(c.tier)); counts[c.tier] = (counts[c.tier] || 0) + 1; }
+  assert.ok(Object.keys(counts).length >= 4, 'default weights should produce a spread of tiers, not one dominant tier');
+  const forcedNone = {};
+  const onlyNone = { clear: 0, weak: 0, indirect: 0, ambiguous: 0, none: 1 };
+  for (let i = 0; i < 500; i++) { const c = generateClue({ kind: 'attack', weights: onlyNone }); forcedNone[c.tier] = (forcedNone[c.tier] || 0) + 1; }
+  assert.deepStrictEqual(Object.keys(forcedNone), ['none'], 'zeroing every other tier must always return "none"');
+  console.log('clue pipeline unit test passed:', counts);
+}
+
 async function main() {
+  testCluePipeline();
   await new Promise(r => server.listen(PORT, r));
   const names = ['Ava', 'Ben', 'Cy', 'Dee', 'Eli', 'Fay', 'Gus', 'Hal', 'Ivy'];
   const bots = names.map((n, i) => new Bot(n, ['male', 'female', 'neutral'][i % 3]));
@@ -172,6 +192,8 @@ async function main() {
     await until(() => bots.every(b => b.state.phase === 'lobby'), 3000, 'back to lobby');
   }
   assert.ok(bots.every(b => !b.sawRolesLeak), 'no player ever saw a hidden living role');
+  assert.ok(bots.every(b => !b.sawConditionLeak), 'no player ever saw another player\'s condition (self-only for now)');
+  assert.ok(bots.every(b => !b.badCondition), 'every player\'s own condition was valid and matched `alive`');
   console.log('games played:', gamesPlayed, 'winners:', winners);
 
   // player who leaves in the lobby is removed; host migrates
