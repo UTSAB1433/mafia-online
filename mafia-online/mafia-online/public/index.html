@@ -297,10 +297,18 @@ const META = {
   mafia:        { icon: '🕶️', title: 'Choose tonight’s victim', sub: 'Talk it over on the Mafia line (voice or chat). The most-picked player is targeted; ties are random.' },
   doctor:       { icon: '🩺', title: 'Who do you protect?', sub: 'They survive any attack tonight.' },
   bodyguard:    { icon: '🛡️', title: 'Who do you guard?', sub: 'If they are attacked, you die in their place.' },
-  detective:    { icon: '🔎', title: 'Who do you investigate?', sub: 'You get one look each night. You will learn if they are Mafia.' },
+  detective:    { icon: '🔎', title: 'Who do you investigate?', sub: 'A first read on whether they seem suspicious — not a confirmed role.' },
   vigilante:    { icon: '🔫', title: 'Take your shot?', sub: 'You have one bullet. Shooting Town helps the Mafia.' },
   serialkiller: { icon: '☠️', title: 'Choose your victim', sub: 'One kill per night. Outlast everyone.' },
   decoy:        { icon: '🌙', title: 'You are asleep', sub: 'You have no night ability. The Mafia are talking. Stay quiet until morning.' }
+};
+const MAFIA_ACTION_META = {
+  attack:         { icon: '🔪', label: 'Attack', sub: 'Pick a target. Outcome is uncertain — it may fail, wound, or kill.' },
+  delayed_attack: { icon: '⏳', label: 'Delayed attack', sub: 'Starts a 2-night countdown to a stronger hit. Blocks a normal attack until it resolves.' },
+  frame:          { icon: '🗞️', label: 'Frame', sub: 'Plant misleading evidence pointing at a target. 2-night cooldown after use.' },
+  sabotage:       { icon: '🧯', label: 'Sabotage', sub: 'Muddy tonight\'s evidence for everyone. 1-night cooldown after use.' },
+  observe:        { icon: '👁️', label: 'Observe', sub: 'Get a vague, mafia-only hint about a target. No cooldown.' },
+  wait:           { icon: '🌑', label: 'Wait', sub: 'Do nothing tonight. Sometimes the best move.' }
 };
 const WIN = {
   town:   { icon: '🏘️', title: 'Town wins', text: 'Every Mafia member has been eliminated.' },
@@ -319,7 +327,7 @@ let pings = {};              // id -> {ms,c,st,left}
 let offset = 0;              // serverNow - clientNow
 let es = null;
 const ui = { name: '', gender: 'neutral', inviteCode: null, online: true, myPing: null, micOn: false, ttsOn: true, narratorOn: true, said: new Set(), intro: {}, sfxOn: true, voicePref: store.get('mafia:voices') || {}, animCards: false, audioSig: '',
-             detPick: null, pendingSel: null, phaseKey: '', mainSig: '', audioBlocked: false, homeErr: '' };
+             detPick: null, pendingSel: null, phaseKey: '', mainSig: '', audioBlocked: false, homeErr: '', mafiaAction: 'attack' };
 
 /* =====================================================================================
  * TEXT-TO-SPEECH: chat is read aloud in a male / female / neutral voice, chosen at join
@@ -1009,8 +1017,16 @@ function nightHTML() {
   const m = META[a.kind];
   let body = '';
   if (a.kind === 'mafia') {
-    const picks = Object.entries(a.team || {}).map(([id, t]) => `${esc(nameOf(id))} → ${t === 'hold' ? 'nobody' : esc(nameOf(t))}`);
-    body = `<p class="muted">Tap a player below. Your team’s picks:</p><div class="script">${picks.length ? picks.join('<br>') : 'no picks yet'}</div>`;
+    const avail = a.actions || ['attack', 'wait'];
+    if (!avail.includes(ui.mafiaAction)) ui.mafiaAction = avail.includes('attack') ? 'attack' : avail[0];
+    const needsTarget = ['attack', 'delayed_attack', 'frame', 'observe'].includes(ui.mafiaAction);
+    const picks = Object.entries(a.team || {}).map(([id, t]) => `${esc(nameOf(id))} → ${MAFIA_ACTION_META[t.action] ? MAFIA_ACTION_META[t.action].label : t.action}${t.target ? ' ' + esc(nameOf(t.target)) : ''}`);
+    const cd = a.countdown ? `<div class="script">⏳ A delayed attack is already in motion, targeting a set player. Resolves on night ${a.countdown.resolvesOnNight}.</div>` : '';
+    const btns = avail.map(k => `<button class="btn ${ui.mafiaAction === k ? 'primary' : ''}" data-a="mafiaAction" data-k="${k}">${MAFIA_ACTION_META[k].icon} ${MAFIA_ACTION_META[k].label}</button>`).join('');
+    body = `${cd}<p class="muted" style="margin-bottom:4px">${MAFIA_ACTION_META[ui.mafiaAction].sub}</p>
+      <div class="two" style="flex-wrap:wrap">${btns}</div>
+      ${needsTarget ? '<p class="muted" style="margin:8px 0 0">Tap a player below.</p>' : `<button class="btn primary big" style="margin-top:8px" data-a="mafiaConfirm">Confirm: ${MAFIA_ACTION_META[ui.mafiaAction].label}</button>`}
+      <p class="muted small" style="margin:10px 0 0">Team's picks so far:</p><div class="script">${picks.length ? picks.join('<br>') : 'no picks yet'}</div>`;
   } else if (a.kind === 'detective') {
     if (a.locked) body = `<div class="script">You investigated <b>${esc(nameOf(a.selected))}</b>. See your notes below.</div>`;
     else if (ui.detPick) body = `<button class="btn primary big" data-a="detConfirm">Investigate ${esc(nameOf(ui.detPick))}</button>`;
@@ -1025,11 +1041,12 @@ function nightHTML() {
   return `<div class="panel center stack tight"><div class="roleicon sm">${m.icon}</div><h2 class="h2">${m.title}</h2><p class="muted">${m.sub}</p>${body}</div>`;
 }
 function dawnHTML() {
-  const d = st.dawn || { deaths: [], saves: [], notice: null };
+  const d = st.dawn || { deaths: [], injured: [], saves: [], notice: null };
   const line = d.deaths.length ? (d.deaths.length === 1 ? 'Someone did not wake up.' : d.deaths.length + ' players did not wake up.') : 'Everyone woke up. Nobody died last night.';
   const noticeText = d.notice ? (d.notice.type === 'saved' ? 'You were attacked last night, but someone saved you.' : `${nameOf(d.notice.id)} was attacked last night. Your protection saved them.`) : '';
   return `<div class="stack"><div class="panel center"><div class="roleicon sm">🌅</div><h2 class="h2">Morning</h2><p class="muted" style="margin:0">${line}</p></div>
-    ${d.deaths.map(x => `<div class="panel"><b style="font-size:20px">🪦 ${esc(nameOf(x.id))}</b><div class="muted">${x.role ? 'They were the ' + ROLES[x.role].name + '.' : 'Their role stays secret.'}</div></div>`).join('')}
+    ${d.deaths.map(x => `<div class="panel"><b style="font-size:20px">🪦 ${esc(nameOf(x.id))}</b><div class="muted">${x.note ? esc(x.note) : (x.role ? 'They were the ' + ROLES[x.role].name + '.' : 'Their role stays secret.')}</div></div>`).join('')}
+    ${(d.injured || []).map(x => `<div class="panel"><b style="font-size:20px">🩸 ${esc(nameOf(x.id))}</b><div class="muted">${x.note ? esc(x.note) : 'Badly hurt, but alive.'}</div></div>`).join('')}
     ${(d.saves || []).map(id => `<div class="panel"><b style="font-size:20px">✚ ${esc(nameOf(id))}</b><div class="muted">Was attacked but saved by the Doctor.</div></div>`).join('')}
     ${d.notice && !(d.saves || []).includes(d.notice.id) ? `<div class="panel"><b>✚ ${esc(noticeText)}</b></div>` : ''}</div>`;
 }
@@ -1069,7 +1086,9 @@ function overHTML() {
 function renderNotes() {
   const el = $('#notes'); if (!el) return;
   const det = st.you.det || [];
-  el.innerHTML = det.length ? `<div class="panel"><p class="note">Your investigations</p>${det.map(d => `<div class="rosterrow"><span>Night ${d.night}: ${esc(nameOf(d.target))}</span><span class="verdict ${d.mafia ? 'bad' : 'good'}">${d.mafia ? 'MAFIA' : 'NOT MAFIA'}</span></div>`).join('')}</div>` : '';
+  const label = r => r === 'suspicious' ? 'SUSPICIOUS' : r === 'inconclusive' ? 'INCONCLUSIVE' : 'NOT SUSPICIOUS';
+  const cls = r => r === 'suspicious' ? 'bad' : r === 'inconclusive' ? '' : 'good';
+  el.innerHTML = det.length ? `<div class="panel"><p class="note">Your investigations</p>${det.map(d => `<div class="rosterrow"><span>Night ${d.night}: ${esc(nameOf(d.target))}</span><span class="verdict ${cls(d.result)}">${label(d.result)}</span></div>`).join('')}</div>` : '';
 }
 
 /* ---------- players ("the table") ---------- */
@@ -1079,6 +1098,10 @@ function targetInfo() {
   if (st.phase === 'night' && st.you.action && st.you.action.kind !== 'decoy') {
     const a = st.you.action, sel = a.selected === 'hold' ? null : a.selected;
     if (a.locked) return { ids: new Set(), selected: sel };
+    if (a.kind === 'mafia') {
+      const needsTarget = ['attack', 'delayed_attack', 'frame', 'observe'].includes(ui.mafiaAction);
+      return needsTarget ? { ids: new Set(a.options), selected: ui.pendingSel } : { ids: new Set(), selected: null };
+    }
     return { ids: new Set(a.options), selected: ui.pendingSel || ui.detPick || sel };
   }
   if (st.phase === 'vote') {
@@ -1110,6 +1133,7 @@ function onPlayerClick(id) {
   const t = targetInfo(); if (!t.ids.has(id)) return;
   if (st.phase === 'night') {
     if (st.you.action.kind === 'detective') { ui.detPick = id; renderMain(); renderPlayers(); return; }
+    if (st.you.action.kind === 'mafia') { ui.pendingSel = id; renderPlayers(); api('night', { action: ui.mafiaAction, target: id }); return; }
     ui.pendingSel = id; renderPlayers(); api('night', { target: id });
   } else if (st.phase === 'vote') {
     const mine = st.vote.votes[st.meId];
@@ -1214,6 +1238,8 @@ document.addEventListener('click', e => {
     case 'pl': onPlayerClick(d.id); break;
     case 'detConfirm': if (ui.detPick) { const id = ui.detPick; ui.detPick = null; api('night', { target: id }); } break;
     case 'hold': api('night', { target: 'hold' }); break;
+    case 'mafiaAction': ui.mafiaAction = d.k; ui.pendingSel = null; renderMain(); renderPlayers(); break;
+    case 'mafiaConfirm': api('night', { action: ui.mafiaAction, target: null }); break;
     case 'ready': api('ready'); break;
     case 'skip': api('vote', { target: 'skip' }); break;
     case 'clearVote': api('vote', { target: null }); break;
