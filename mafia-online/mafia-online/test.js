@@ -4,7 +4,7 @@
 process.env.FAST = '1';
 const http = require('http');
 const assert = require('assert');
-const { server, rooms, generateClue, CLUE_TIERS, CONDITIONS } = require('./server');
+const { server, rooms, generateClue, CLUE_TIERS, CONDITIONS, rollAttackOutcome, softenOutcome, mafiaActionsAvailable, MAFIA_ACTIONS, OUTCOME_ORDER } = require('./server');
 
 const PORT = 3999;
 const base = { hostname: '127.0.0.1', port: PORT };
@@ -68,6 +68,14 @@ class Bot {
       if (!CONDITIONS.includes(s.you.condition)) this.badCondition = true;
       if ((s.you.condition === 'dead') !== !s.you.alive) this.badCondition = true;
     }
+    // A Detective's own investigation history should only ever contain Stage-1-shaped results —
+    // never a raw faction/role boolean (that would defeat the whole point of staging it).
+    if (Array.isArray(s.you.det)) {
+      for (const d of s.you.det) {
+        if ('mafia' in d) this.sawRawDetectiveLeak = true;
+        if (!['suspicious', 'not_suspicious', 'inconclusive'].includes(d.result)) this.badDetectiveResult = true;
+      }
+    }
   }
   react(s) {
     if (this.stopped || this.disconnected) return;
@@ -79,7 +87,22 @@ class Bot {
       if (HOLD && st.phase === 'night') { this.lastKey = null; return; }
       if (st.phase === 'night' && st.you.action && st.you.action.kind !== 'decoy') {
         const a = st.you.action; const opts = a.options;
-        if (a.kind === 'vigilante' && Math.random() < 0.5) this.act('night', { target: 'hold' });
+        if (a.kind === 'mafia') {
+          // Mostly attack, so games still play out at a normal pace, but exercise every other
+          // action often enough that the test suite actually sees them fire across 8 games.
+          const avail = a.actions || ['attack', 'wait'];
+          const roll = Math.random();
+          let action = 'wait';
+          if (roll < 0.65 && avail.includes('attack')) action = 'attack';
+          else if (roll < 0.72 && avail.includes('delayed_attack')) action = 'delayed_attack';
+          else if (roll < 0.80 && avail.includes('frame')) action = 'frame';
+          else if (roll < 0.88 && avail.includes('sabotage')) action = 'sabotage';
+          else if (roll < 0.96 && avail.includes('observe')) action = 'observe';
+          else if (avail.includes('attack')) action = 'attack';     // fallback keeps games from stalling forever
+          const needsTarget = ['attack', 'delayed_attack', 'frame', 'observe'].includes(action);
+          const target = needsTarget && opts.length ? opts[Math.floor(Math.random() * opts.length)] : null;
+          this.act('night', { action, target });
+        } else if (a.kind === 'vigilante' && Math.random() < 0.5) this.act('night', { target: 'hold' });
         else if (opts.length) this.act('night', { target: opts[Math.floor(Math.random() * opts.length)] });
       } else if (st.phase === 'day' && st.you.alive) {
         if (Math.random() < 0.9) this.act('ready');
@@ -110,8 +133,46 @@ function testCluePipeline() {
   console.log('clue pipeline unit test passed:', counts);
 }
 
+function testAttackOutcomes() {
+  const healthy = { condition: 'good' }, hurt = { condition: 'mediocre' }, dying = { condition: 'critical' };
+  const tally = (target, n, opts) => { const c = {}; for (let i = 0; i < n; i++) { const t = rollAttackOutcome(target, opts); assert.ok(OUTCOME_ORDER.includes(t)); c[t] = (c[t] || 0) + 1; } return c; };
+  const healthyOut = tally(healthy, 3000, {});
+  const hurtOut = tally(hurt, 3000, {});
+  const dyingOut = tally(dying, 3000, {});
+  assert.ok((hurtOut.dead || 0) > (healthyOut.dead || 0), 'an already-wounded target should be more likely to die from a fresh attack');
+  assert.ok((dyingOut.dead || 0) > (hurtOut.dead || 0), 'a critical target should be even more likely to die than a merely wounded one');
+  const strongOut = tally(healthy, 3000, { strong: true });
+  assert.ok((strongOut.fail || 0) === 0, 'a resolved delayed (strong) attack should never simply fail');
+  assert.ok((strongOut.dead || 0) > (healthyOut.dead || 0), 'a strong attack should be deadlier than a normal one');
+  // softenOutcome always moves exactly one step toward surviving, and 'fail' has nowhere further to go
+  assert.strictEqual(softenOutcome('dead'), 'critical');
+  assert.strictEqual(softenOutcome('critical'), 'mediocre');
+  assert.strictEqual(softenOutcome('mediocre'), 'fail');
+  assert.strictEqual(softenOutcome('fail'), 'fail');
+  console.log('attack outcome unit test passed:', { healthyOut, hurtOut, dyingOut, strongOut });
+}
+
+function testMafiaActionAvailability() {
+  const fresh = { night: 3, mafiaCooldowns: {}, mafiaCountdown: null };
+  const avail = mafiaActionsAvailable(fresh);
+  for (const a of ['wait', 'observe', 'attack', 'delayed_attack', 'frame', 'sabotage']) assert.ok(avail.includes(a), `${a} should be available with no cooldowns/countdown active`);
+  const midCountdown = { night: 4, mafiaCooldowns: {}, mafiaCountdown: { target: 'x', resolvesOnNight: 6 } };
+  const avail2 = mafiaActionsAvailable(midCountdown);
+  assert.ok(!avail2.includes('attack') && !avail2.includes('delayed_attack'), 'attack/delayed_attack must be blocked while a countdown is already in flight');
+  assert.ok(avail2.includes('frame') && avail2.includes('sabotage') && avail2.includes('wait') && avail2.includes('observe'), 'everything else should still be usable during a countdown');
+  const onCooldown = { night: 3, mafiaCooldowns: { frame: 5, sabotage: 4 }, mafiaCountdown: null };
+  const avail3 = mafiaActionsAvailable(onCooldown);
+  assert.ok(!avail3.includes('frame') && !avail3.includes('sabotage'), 'frame/sabotage must be unavailable while on cooldown');
+  const offCooldown = { night: 5, mafiaCooldowns: { frame: 5, sabotage: 4 }, mafiaCountdown: null };
+  const avail4 = mafiaActionsAvailable(offCooldown);
+  assert.ok(avail4.includes('frame') && avail4.includes('sabotage'), 'frame/sabotage must return once the cooldown night is reached');
+  console.log('mafia action availability unit test passed');
+}
+
 async function main() {
   testCluePipeline();
+  testAttackOutcomes();
+  testMafiaActionAvailability();
   await new Promise(r => server.listen(PORT, r));
   const names = ['Ava', 'Ben', 'Cy', 'Dee', 'Eli', 'Fay', 'Gus', 'Hal', 'Ivy'];
   const bots = names.map((n, i) => new Bot(n, ['male', 'female', 'neutral'][i % 3]));
@@ -130,7 +191,7 @@ async function main() {
   assert.ok((await bots[1].act('settings', { settings: { jester: true } })).error);
   assert.ok((await host.act('settings', { settings: { godfather: true, bodyguard: true, vigilante: true, jester: true, serialkiller: true, tie: 'revote', nightSec: 6, daySec: 3, voteSec: 3 } })).ok);
 
-  let gamesPlayed = 0; const winners = {};
+  let gamesPlayed = 0; const winners = {}; const allLogText = [];
   for (let g = 0; g < 8; g++) {
     // lobby chat is public
     await bots[2].act('chat', { text: 'hello lobby ' + g });
@@ -188,13 +249,22 @@ async function main() {
     assert.ok(['town', 'mafia', 'sk', 'jester', 'draw'].includes(w));
     // after game over everyone sees everything
     assert.ok(bots[0].state.recap.roster.every(r => r.role), 'roles revealed at end');
+    allLogText.push(bots[0].state.recap.log.map(e => e.text).join(' | '));
     assert.ok((await host.act('again')).ok);
     await until(() => bots.every(b => b.state.phase === 'lobby'), 3000, 'back to lobby');
   }
   assert.ok(bots.every(b => !b.sawRolesLeak), 'no player ever saw a hidden living role');
   assert.ok(bots.every(b => !b.sawConditionLeak), 'no player ever saw another player\'s condition (self-only for now)');
   assert.ok(bots.every(b => !b.badCondition), 'every player\'s own condition was valid and matched `alive`');
+  assert.ok(bots.every(b => !b.sawRawDetectiveLeak), 'Detective results must never be a raw mafia:boolean, only a Stage-1 result');
+  assert.ok(bots.every(b => !b.badDetectiveResult), 'every Detective result was one of the valid Stage-1 outcomes');
   console.log('games played:', gamesPlayed, 'winners:', winners);
+
+  // Over 8 games' worth of night logs, we should see real variety: not just plain kills.
+  const blob = allLogText.join(' || ');
+  assert.ok(/\(mediocre\)|\(critical\)/.test(blob), 'expected at least one non-lethal (mediocre/critical) attack outcome across 8 games');
+  assert.ok(/planted misleading evidence|set something in motion|interfered with tonight|Detective .* investigated/.test(blob), 'expected at least one non-attack Mafia action or a Detective investigation in the logs');
+  console.log('night-log variety check passed');
 
   // player who leaves in the lobby is removed; host migrates
   await bots[8].act('leave');
