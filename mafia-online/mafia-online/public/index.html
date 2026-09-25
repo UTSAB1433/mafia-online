@@ -665,6 +665,12 @@ function sceneMurder(d, isMe) {
     html: `<div class="scene sc-murder"><div class="shk"><div class="target">${avatarBig(p)}</div><svg class="slashes" viewBox="0 0 300 300" aria-hidden="true"><path pathLength="1" d="M40 50 L260 250"/><path pathLength="1" d="M250 40 L50 260"/><path pathLength="1" d="M70 160 L240 175"/></svg><div class="rip">🪦</div></div><div class="flash"></div>
       ${ctext('In the night…', isMe ? 'You were killed' : esc(p.name) + ' was killed', r ? `${isMe ? 'You were' : 'They were'} the ${r.name} ${r.icon}` : 'Their role stays hidden.')}${skipHint}</div>` };
 }
+function sceneInjured(d, isMe) {
+  const p = pl(d.id);
+  return { ms: 4200, sfx: 'verdict',
+    html: `<div class="scene sc-murder"><div class="shk"><div class="target">${avatarBig(p)}</div><svg class="slashes" viewBox="0 0 300 300" aria-hidden="true"><path pathLength="1" d="M40 50 L260 250"/><path pathLength="1" d="M70 160 L240 175"/></svg><div class="rip">🩸</div></div><div class="flash"></div>
+      ${ctext('In the night…', isMe ? 'You were badly hurt' : esc(p.name) + ' was badly hurt', isMe ? 'You survived, but only barely.' : 'They survived, but only barely.')}${skipHint}</div>` };
+}
 function sceneSave(id, isMe, isDoc, privateOnly) {
   const p = pl(id);
   const title = isMe ? 'You were attacked… and saved!' : `${esc(p.name)} was attacked… and saved!`;
@@ -689,8 +695,10 @@ function sceneWin(w) {
     html: `<div class="scene sc-win k-${esc(w.key)}"><div class="confetti">${(w.key === 'draw' || w.key === 'mafia' || w.key === 'sk') ? '' : conf}</div><div class="big">${base.icon}</div>${ctext('Game over', base.title, text)}${skipHint}</div>` };
 }
 function dawnScenes(v) {
-  const d = v.dawn || { deaths: [], saves: [], notice: null }, me = v.meId, list = [sceneMorning(d.deaths.length > 0, v.night)];
+  const d = v.dawn || { deaths: [], saves: [], injured: [], notice: null }, me = v.meId;
+  const list = [sceneMorning(d.deaths.length > 0 || (d.injured && d.injured.length > 0), v.night)];
   (d.deaths || []).forEach(x => list.push(sceneMurder(x, x.id === me)));
+  (d.injured || []).forEach(x => list.push(sceneInjured(x, x.id === me)));
   const pub = d.saves || [], n = d.notice;
   pub.forEach(id => list.push(sceneSave(id, id === me, !!(n && n.type === 'patient' && n.id === id), false)));
   if (!pub.length && n) list.push(sceneSave(n.id, n.type === 'saved', n.type === 'patient', true));
@@ -886,8 +894,9 @@ function announce(v) {
     case 'reveal': ui.intro = {}; narrate('The roles have been dealt. Look at your card.'); break;
     case 'night': narrate(first('night') ? `Night ${v.night} falls. Everyone, close your eyes. Mafia, wake up.` : `Night ${v.night} falls.`); playCine([sceneNight(v.night)]); break;
     case 'dawn': {
-      const d = v.dawn || { deaths: [], saves: [] };
+      const d = v.dawn || { deaths: [], saves: [], injured: [] };
       let t = d.deaths.length ? `Morning. ${names(d.deaths.map(x => x.id))} did not wake up.` : 'Morning. Nobody died last night.';
+      if (d.injured && d.injured.length) t += ` ${names(d.injured.map(x => x.id))} ${d.injured.length === 1 ? 'was' : 'were'} badly hurt.`;
       if (d.saves && d.saves.length) t += ` ${names(d.saves)} was attacked, but the doctor saved them.`;
       narrate(t); playCine(dawnScenes(v)); break;
     }
@@ -1100,7 +1109,12 @@ function targetInfo() {
     if (a.locked) return { ids: new Set(), selected: sel };
     if (a.kind === 'mafia') {
       const needsTarget = ['attack', 'delayed_attack', 'frame', 'observe'].includes(ui.mafiaAction);
-      return needsTarget ? { ids: new Set(a.options), selected: ui.pendingSel } : { ids: new Set(), selected: null };
+      if (!needsTarget) return { ids: new Set(), selected: null };
+      // a.selected is this player's own last-confirmed {action,target}; only show it as the
+      // highlighted target if it matches the action currently selected in the UI, so switching
+      // from e.g. Attack to Frame doesn't leave the old Attack target looking picked.
+      const confirmed = a.selected && a.selected.action === ui.mafiaAction ? a.selected.target : null;
+      return { ids: new Set(a.options), selected: ui.pendingSel || confirmed };
     }
     return { ids: new Set(a.options), selected: ui.pendingSel || ui.detPick || sel };
   }
