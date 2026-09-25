@@ -142,6 +142,9 @@ function mafiaActionsAvailable(room) {
   if (room.night >= (room.mafiaCooldowns.sabotage || 0)) avail.push('sabotage');
   return avail;
 }
+// Used on night `n`, blocked for `blockedNights` full nights, available again after that.
+// e.g. nextCooldownNight(3, 2) => 6: unavailable on nights 4 and 5, available again on night 6.
+function nextCooldownNight(n, blockedNights) { return n + blockedNights + 1; }
 
 /* ------------------------------------------------------------------ rooms & players */
 function makeCode() {
@@ -157,7 +160,7 @@ function newPlayer(room, name, gender) {
   const color = COLORS.find(c => !used.has(c)) || COLORS[room.players.size % COLORS.length];
   const p = { id: rid(4), token: rid(16), name, gender: ['male', 'female', 'neutral'].includes(gender) ? gender : 'neutral', color,
     connected: false, res: null, lastSeen: now(), lostAt: 0, lostNotice: false, ping: null, highNoticeAt: 0,
-    alive: true, condition: 'good', role: null, bullets: 0, left: false, ready: false, det: [], chatTimes: [], sigTimes: [], sigQueue: [] };
+    alive: true, condition: 'good', role: null, bullets: 0, left: false, ready: false, det: [], chatTimes: [], sigTimes: [], sigQueue: [], claimTimes: [] };
   room.players.set(p.id, p); room.order.push(p.id);
   return p;
 }
@@ -255,7 +258,7 @@ function view(room, p) {
         role: inGame ? visibleRole(room, p, q) : null, ready: room.phase === 'day' ? q.ready : false };
     }),
     you: { role: p.role, alive: p.alive, condition: p.condition, bullets: p.bullets, det: p.det, action: null },
-    channel: chatChannel(room, p), voice: voicePolicy(room, p)
+    channel: chatChannel(room, p), voice: voicePolicy(room, p), caseFile: room.caseFile.entries
   };
   if (room.phase === 'night' && p.alive) {
     const kind = nightKind(p);
@@ -337,6 +340,7 @@ function startGame(room) {
   room.gameNo = (room.gameNo || 0) + 1;
   room.night = 0; room.log = []; room.winner = null; room.jesterWin = null; room.dawn = null; room.result = null;
   room.mafiaCooldowns = {}; room.mafiaCountdown = null; room.mafiaFrames = []; room.sabotageActiveNight = 0;
+  room.caseFile = newCaseFile();
   sys(room, 'The roles have been dealt. Check yours.');
   setPhase(room, 'reveal', T(12));
 }
@@ -381,13 +385,9 @@ function onDeadline(room) {
 }
 function maybeAdvance(room) {
   const ph = room.phase;
-  if (ph === 'night') {
-    const req = requiredActors(room).filter(p => p.connected);
-    if (req.every(p => acted(room, p))) {
-      const at = room.phaseStart + (FAST ? 0 : 20000);      // minimum night length so nobody can time who has an ability
-      setDeadline(room, Math.max(now(), at) < room.phaseEnd ? Math.max(now(), at) : room.phaseEnd);
-    }
-  } else if (ph === 'vote') {
+  // Night intentionally has no early-advance: it always runs its full configured length, even
+  // once every required actor has acted, so timing never leaks who has (or lacks) a night ability.
+  if (ph === 'vote') {
     const req = requiredActors(room).filter(p => p.connected);
     if (req.every(p => acted(room, p)) && room.phaseEnd - now() > 2000) setDeadline(room, now() + 2000);
   } else if (ph === 'day') {
@@ -399,7 +399,7 @@ function maybeAdvance(room) {
 function resolveNight(room) {
   const P = room.players, n = room.night, notes = [];
   const alive = [...P.values()].filter(p => p.alive);
-  const picks = alive.map(p => ({ p, kind: nightKind(p), raw: room.picks[p.id] })).filter(x => x.kind !== 'decoy' && x.raw !== undefined);
+  const picks = alive.map(p => ({ p, kind: nightKind(p), raw: room.picks[p.id] })).filter(x => x.kind !== 'decoy' && x.raw !== undefined && x.raw !== 'hold');
 
   // ---- Mafia team action: plurality of {action,target} among submitted picks (ties -> random) ----
   const mafiaPicks = picks.filter(x => x.kind === 'mafia');
@@ -435,7 +435,7 @@ function resolveNight(room) {
     case 'frame':
       if (mafiaChoice.target) {
         room.mafiaFrames.push({ target: mafiaChoice.target, expiresNight: n + FRAME_COOLDOWN_NIGHTS });
-        room.mafiaCooldowns.frame = n + FRAME_COOLDOWN_NIGHTS;
+        room.mafiaCooldowns.frame = nextCooldownNight(n, FRAME_COOLDOWN_NIGHTS);
         const tp = P.get(mafiaChoice.target);
         notes.push('The Mafia planted misleading evidence.');
         addChat(room, { ch: 'mafia', text: `You planted misleading evidence pointing at ${tp ? tp.name : 'someone'}.` });
@@ -443,7 +443,7 @@ function resolveNight(room) {
       break;
     case 'sabotage':
       room.sabotageActiveNight = n;
-      room.mafiaCooldowns.sabotage = n + SABOTAGE_COOLDOWN_NIGHTS;
+      room.mafiaCooldowns.sabotage = nextCooldownNight(n, SABOTAGE_COOLDOWN_NIGHTS);
       notes.push('The Mafia interfered with tonight\'s evidence.');
       addChat(room, { ch: 'mafia', text: 'You interfered with tonight\'s evidence.' });
       break;
@@ -492,12 +492,13 @@ function resolveNight(room) {
   for (const a of attacks) {
     const t = P.get(a.t);
     if (!t || t.condition === 'dead' || deadSet.has(t.id)) continue;
-    let tier = rollAttackOutcome(t, { strong: a.strong });
+    const rawTier = rollAttackOutcome(t, { strong: a.strong });
     const wasHealed = healed.has(t.id);
-    if (wasHealed) tier = softenOutcome(tier);
+    const tier = wasHealed ? softenOutcome(rawTier) : rawTier;
+    const actuallySaved = wasHealed && tier !== rawTier;   // only a "save" if the heal changed the outcome
     const gd = guards.find(x => x.raw === t.id && !deadSet.has(x.p.id) && x.p.condition !== 'dead');
     const applyTo = gd ? gd.p : t;
-    if (wasHealed && !saves.includes(t.id)) {
+    if (actuallySaved && !saves.includes(t.id)) {
       saves.push(t.id); notices[t.id] = { type: 'saved', id: t.id };
       picks.filter(x => x.kind === 'doctor' && x.raw === t.id).forEach(x => { if (!notices[x.p.id]) notices[x.p.id] = { type: 'patient', id: t.id }; });
     }
@@ -524,6 +525,10 @@ function resolveNight(room) {
   });
 
   room.dawn = { deaths: deathReports, injured: injuredReports, saves, notices };
+  // These are already public dawn news, so they enter the Case File automatically as VERIFIED FACT —
+  // unlike a Detective's result or a Doctor's save, which stay private until a player formally claims them.
+  deathReports.forEach(d => addCaseEntry(room, { type: 'event', category: 'death', night: n, about: d.id, text: d.note || `${P.get(d.id).name} was found dead.` }));
+  injuredReports.forEach(x => addCaseEntry(room, { type: 'event', category: 'injury', night: n, about: x.id, text: x.note || `${P.get(x.id).name} was found badly hurt.` }));
   setPhase(room, 'dawn', T(Math.min(22, 4.5 + 3.6 * (deathReports.length + injuredReports.length + saves.length))));
 }
 function checkWin(room) {
@@ -560,7 +565,12 @@ function tally(room) {
   }
   const max = Math.max(0, ...Object.values(counts));
   const snapshot = { counts, skip, votes: { ...room.votes } };
-  const none = note => { room.log.push({ label: `Day ${room.night}`, text: note }); room.result = { pid: null, note, ...snapshot }; setPhase(room, 'result', T(7)); };
+  const none = note => {
+    room.log.push({ label: `Day ${room.night}`, text: note });
+    room.result = { pid: null, note, ...snapshot };
+    addCaseEntry(room, { type: 'vote', night: room.night, round: room.voteRound, counts, skip, eliminated: null, note });
+    setPhase(room, 'result', T(7));
+  };
   if (max === 0 || skip >= max) return none('The town chose not to eliminate anyone.');
   const top = Object.keys(counts).filter(k => counts[k] === max);
   let victim = null, note = '';
@@ -574,6 +584,7 @@ function tally(room) {
   room.log.push({ label: `Day ${room.night}`, text: `${v.name} was voted out (${v.role}).` });
   if (v.role === 'jester') room.jesterWin = v;
   room.result = { pid: v.id, role: (room.settings.reveal || v.role === 'jester') ? v.role : null, note, ...snapshot };
+  addCaseEntry(room, { type: 'vote', night: room.night, round: room.voteRound, counts, skip, eliminated: v.id, note: note || `${v.name} was voted out.` });
   setPhase(room, 'result', T(7));
 }
 function afterResult(room) {
@@ -667,6 +678,37 @@ function handleAct(room, p, b) {
       if (!ch) return { error: 'You cannot talk right now.' };
       addChat(room, { ch, from: p.id, name: p.name, gender: p.gender, text });
       return { ok: true };
+    }
+    // A formal claim is deliberately not the same as chat: chat is a rolling 150-message window
+    // and nothing is kept once it scrolls off; a claim is a permanent Case File entry everyone
+    // (living, dead, and future viewers of the recap) can always see and respond to.
+    case 'claim': {
+      if (!['day', 'vote', 'result', 'dawn'].includes(room.phase)) return { error: 'Not now.' };
+      if (!p.alive) return { error: 'The dead cannot add to the case file.' };
+      const text = String(b.text || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 280);
+      if (!text) return { error: 'Say something first.' };
+      const t = now(); p.claimTimes = p.claimTimes.filter(x => t - x < 30000);
+      if (p.claimTimes.length >= 4) return { error: 'Slow down — too many formal claims.' };
+      p.claimTimes.push(t);
+      const about = b.about && room.players.has(String(b.about)) ? String(b.about) : null;
+      const entry = addCaseEntry(room, { type: 'claim', by: p.id, text, about, night: room.night, phase: room.phase });
+      sys(room, `${p.name} put a formal claim on the record.`);
+      pushState(room); return { ok: true, entryId: entry.id };
+    }
+    case 'respond': {
+      if (!['day', 'vote', 'result', 'dawn'].includes(room.phase)) return { error: 'Not now.' };
+      if (!p.alive) return { error: 'The dead cannot add to the case file.' };
+      const target = room.caseFile.entries.find(e => e.id === String(b.entryId || '') && e.type === 'claim');
+      if (!target) return { error: 'That claim is not on the record.' };
+      if (!['confirm', 'deny', 'challenge'].includes(b.stance)) return { error: 'Unknown response.' };
+      const text = String(b.text || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 280);
+      const t = now(); p.claimTimes = p.claimTimes.filter(x => t - x < 30000);
+      if (p.claimTimes.length >= 4) return { error: 'Slow down — too many formal claims.' };
+      p.claimTimes.push(t);
+      const entry = addCaseEntry(room, { type: 'response', by: p.id, refersTo: target.id, stance: b.stance, text, night: room.night, phase: room.phase });
+      const verb = b.stance === 'confirm' ? 'confirmed' : b.stance === 'deny' ? 'denied' : 'challenged';
+      sys(room, `${p.name} ${verb} a claim on the record.`);
+      pushState(room); return { ok: true, entryId: entry.id };
     }
     case 'signal': {
       const t = now(); p.sigTimes = p.sigTimes.filter(x => t - x < 5000);
@@ -834,4 +876,5 @@ if (require.main === module) {
   server.listen(PORT, () => console.log(`Mafia online listening on http://localhost:${PORT}`));
 }
 module.exports = { server, rooms, composePlan, autoTeam, maxTeam, generateClue, CLUE_TIERS, CONDITIONS, addCaseEntry,
-  rollAttackOutcome, softenOutcome, mafiaActionsAvailable, MAFIA_ACTIONS, OUTCOME_ORDER };
+  rollAttackOutcome, softenOutcome, mafiaActionsAvailable, MAFIA_ACTIONS, OUTCOME_ORDER, nextCooldownNight,
+  FRAME_COOLDOWN_NIGHTS, SABOTAGE_COOLDOWN_NIGHTS, resolveNight };
