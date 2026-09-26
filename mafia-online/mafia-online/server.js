@@ -59,10 +59,12 @@ function setCondition(p, cond) {
   p.alive = cond !== 'dead';       // keep every existing `alive`-based check correct
 }
 
-/* ------------------------------------------------------------------ case file (foundation for Phase 2+)
- * A room-scoped, append-only record. Nothing writes to it yet — Phase 2 (formal claims,
- * testimony, contradictions) is what actually populates it — but the shape needs to exist
- * now so every later phase (and reconnect/view logic) is built against it from day one.
+/* ------------------------------------------------------------------ case file (Phase 2)
+ * A room-scoped, append-only, publicly-visible record — every living AND dead player sees the
+ * same entries (this is deliberately not secret info like a role or a condition). Populated two
+ * ways: automatically, for already-public events (deaths, injuries, vote outcomes — see
+ * resolveNight() and tally()), and by player action, via the 'claim' and 'respond' handlers below.
+ * Reset every startGame() so it never carries over between games in the same room.
  */
 function newCaseFile() { return { entries: [] }; }
 function addCaseEntry(room, entry) {
@@ -527,7 +529,7 @@ function resolveNight(room) {
   room.dawn = { deaths: deathReports, injured: injuredReports, saves, notices };
   // These are already public dawn news, so they enter the Case File automatically as VERIFIED FACT —
   // unlike a Detective's result or a Doctor's save, which stay private until a player formally claims them.
-  deathReports.forEach(d => addCaseEntry(room, { type: 'event', category: 'death', night: n, about: d.id, text: d.note || `${P.get(d.id).name} was found dead.` }));
+  deathReports.forEach(d => addCaseEntry(room, { type: 'event', category: 'death', night: n, about: d.id, role: d.role, text: d.note || `${P.get(d.id).name} was found dead.` }));
   injuredReports.forEach(x => addCaseEntry(room, { type: 'event', category: 'injury', night: n, about: x.id, text: x.note || `${P.get(x.id).name} was found badly hurt.` }));
   setPhase(room, 'dawn', T(Math.min(22, 4.5 + 3.6 * (deathReports.length + injuredReports.length + saves.length))));
 }
@@ -576,6 +578,7 @@ function tally(room) {
   let victim = null, note = '';
   if (top.length === 1) victim = top[0];
   else if (room.settings.tie === 'revote' && room.voteRound === 1) {
+    addCaseEntry(room, { type: 'vote', night: room.night, round: room.voteRound, counts, skip, eliminated: null, note: 'The vote was tied. Revoting between the tied players.', tied: top });
     sys(room, 'Tie! Vote again. Only the tied players are on the ballot.');
     return startVote(room, top, 2);
   } else if (room.settings.tie === 'random') { victim = pickOne(top); note = 'The vote was tied, so one tied player was picked at random.'; }
@@ -583,8 +586,9 @@ function tally(room) {
   const v = P.get(victim); setCondition(v, 'dead');
   room.log.push({ label: `Day ${room.night}`, text: `${v.name} was voted out (${v.role}).` });
   if (v.role === 'jester') room.jesterWin = v;
-  room.result = { pid: v.id, role: (room.settings.reveal || v.role === 'jester') ? v.role : null, note, ...snapshot };
-  addCaseEntry(room, { type: 'vote', night: room.night, round: room.voteRound, counts, skip, eliminated: v.id, note: note || `${v.name} was voted out.` });
+  const revealed = (room.settings.reveal || v.role === 'jester') ? v.role : null;
+  room.result = { pid: v.id, role: revealed, note, ...snapshot };
+  addCaseEntry(room, { type: 'vote', night: room.night, round: room.voteRound, counts, skip, eliminated: v.id, role: revealed, note: note || `${v.name} was voted out.` });
   setPhase(room, 'result', T(7));
 }
 function afterResult(room) {
@@ -700,6 +704,7 @@ function handleAct(room, p, b) {
       if (!p.alive) return { error: 'The dead cannot add to the case file.' };
       const target = room.caseFile.entries.find(e => e.id === String(b.entryId || '') && e.type === 'claim');
       if (!target) return { error: 'That claim is not on the record.' };
+      if (target.by === p.id) return { error: 'You cannot respond to your own claim.' };
       if (!['confirm', 'deny', 'challenge'].includes(b.stance)) return { error: 'Unknown response.' };
       const text = String(b.text || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 280);
       const t = now(); p.claimTimes = p.claimTimes.filter(x => t - x < 30000);
