@@ -695,13 +695,10 @@ function sceneWin(w) {
     html: `<div class="scene sc-win k-${esc(w.key)}"><div class="confetti">${(w.key === 'draw' || w.key === 'mafia' || w.key === 'sk') ? '' : conf}</div><div class="big">${base.icon}</div>${ctext('Game over', base.title, text)}${skipHint}</div>` };
 }
 function dawnScenes(v) {
-  const d = v.dawn || { deaths: [], saves: [], injured: [], notice: null }, me = v.meId;
+  const d = v.dawn || { deaths: [], injured: [] }, me = v.meId;
   const list = [sceneMorning(d.deaths.length > 0 || (d.injured && d.injured.length > 0), v.night)];
   (d.deaths || []).forEach(x => list.push(sceneMurder(x, x.id === me)));
   (d.injured || []).forEach(x => list.push(sceneInjured(x, x.id === me)));
-  const pub = d.saves || [], n = d.notice;
-  pub.forEach(id => list.push(sceneSave(id, id === me, !!(n && n.type === 'patient' && n.id === id), false)));
-  if (!pub.length && n) list.push(sceneSave(n.id, n.type === 'saved', n.type === 'patient', true));
   return list;
 }
 
@@ -894,10 +891,9 @@ function announce(v) {
     case 'reveal': ui.intro = {}; narrate('The roles have been dealt. Look at your card.'); break;
     case 'night': narrate(first('night') ? `Night ${v.night} falls. Everyone, close your eyes. Mafia, wake up.` : `Night ${v.night} falls.`); playCine([sceneNight(v.night)]); break;
     case 'dawn': {
-      const d = v.dawn || { deaths: [], saves: [], injured: [] };
+      const d = v.dawn || { deaths: [], injured: [] };
       let t = d.deaths.length ? `Morning. ${names(d.deaths.map(x => x.id))} did not wake up.` : 'Morning. Nobody died last night.';
       if (d.injured && d.injured.length) t += ` ${names(d.injured.map(x => x.id))} ${d.injured.length === 1 ? 'was' : 'were'} badly hurt.`;
-      if (d.saves && d.saves.length) t += ` ${names(d.saves)} was attacked, but the doctor saved them.`;
       narrate(t); playCine(dawnScenes(v)); break;
     }
     case 'day': narrate(first('day') ? 'Discussion time. Talk it out.' : `Day ${v.night}.`); break;
@@ -1050,14 +1046,12 @@ function nightHTML() {
   return `<div class="panel center stack tight"><div class="roleicon sm">${m.icon}</div><h2 class="h2">${m.title}</h2><p class="muted">${m.sub}</p>${body}</div>`;
 }
 function dawnHTML() {
-  const d = st.dawn || { deaths: [], injured: [], saves: [], notice: null };
+  const d = st.dawn || { deaths: [], injured: [], report: null };
   const line = d.deaths.length ? (d.deaths.length === 1 ? 'Someone did not wake up.' : d.deaths.length + ' players did not wake up.') : 'Everyone woke up. Nobody died last night.';
-  const noticeText = d.notice ? (d.notice.type === 'saved' ? 'You were attacked last night, but someone saved you.' : `${nameOf(d.notice.id)} was attacked last night. Your protection saved them.`) : '';
   return `<div class="stack"><div class="panel center"><div class="roleicon sm">🌅</div><h2 class="h2">Morning</h2><p class="muted" style="margin:0">${line}</p></div>
     ${d.deaths.map(x => `<div class="panel"><b style="font-size:20px">🪦 ${esc(nameOf(x.id))}</b><div class="muted">${x.note ? esc(x.note) : (x.role ? 'They were the ' + ROLES[x.role].name + '.' : 'Their role stays secret.')}</div></div>`).join('')}
     ${(d.injured || []).map(x => `<div class="panel"><b style="font-size:20px">🩸 ${esc(nameOf(x.id))}</b><div class="muted">${x.note ? esc(x.note) : 'Badly hurt, but alive.'}</div></div>`).join('')}
-    ${(d.saves || []).map(id => `<div class="panel"><b style="font-size:20px">✚ ${esc(nameOf(id))}</b><div class="muted">Was attacked but saved by the Doctor.</div></div>`).join('')}
-    ${d.notice && !(d.saves || []).includes(d.notice.id) ? `<div class="panel"><b>✚ ${esc(noticeText)}</b></div>` : ''}</div>`;
+    ${d.report ? `<div class="panel"><p class="note">Your action, last night</p><b>${esc(d.report)}</b></div>` : ''}</div>`;
 }
 function dayHTML() {
   const r = st.ready || { count: 0, need: 1 }, me = st.players.find(p => p.id === st.meId);
@@ -1137,6 +1131,7 @@ function renderPlayers() {
       <span class="nm">${esc(p.name)}${p.host ? ' ★' : ''}${me ? ' (you)' : ''}</span>
       <span class="ping" data-ping="${p.id}"></span>
       ${role ? `<span class="rtag">${role.icon} ${role.name}</span>` : (!p.alive && st.phase !== 'lobby' ? '<span class="rtag">🪦 out</span>' : '')}
+      ${p.alive && p.condition && p.condition !== 'good' ? `<span class="vtag" style="background:${p.condition === 'critical' ? '#c0392b' : '#e67e22'}">${p.condition.toUpperCase()}</span>` : ''}
       ${vcount ? `<span class="vtag">${vcount} vote${vcount > 1 ? 's' : ''}</span>` : ''}${casts}
       ${st.phase === 'day' && p.ready ? '<span class="vtag">ready</span>' : ''}</div>`;
   }).join('');
