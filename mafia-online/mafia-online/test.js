@@ -4,8 +4,8 @@
 process.env.FAST = '1';
 const http = require('http');
 const assert = require('assert');
-const { server, rooms, generateClue, CLUE_TIERS, CONDITIONS, rollAttackOutcome, softenOutcome, mafiaActionsAvailable,
-  MAFIA_ACTIONS, OUTCOME_ORDER, nextCooldownNight, FRAME_COOLDOWN_NIGHTS, SABOTAGE_COOLDOWN_NIGHTS, resolveNight } = require('./server');
+const { server, rooms, generateClue, CLUE_TIERS, CONDITIONS, worsen, CONDITION_ORDER, outcomeReportText, mafiaActionsAvailable,
+  MAFIA_ACTIONS, nextCooldownNight, FRAME_COOLDOWN_NIGHTS, SABOTAGE_COOLDOWN_NIGHTS, resolveNight } = require('./server');
 
 const PORT = 3999;
 const base = { hostname: '127.0.0.1', port: PORT };
@@ -63,8 +63,14 @@ class Bot {
       if (p.id === s.meId || p.role == null || s.phase === 'over') continue;
       const teammate = myMafia && (p.role === 'mafia' || p.role === 'godfather');
       if (p.alive && !teammate) { this.sawRolesLeak = true; }
-      // Phase 0 foundation: `condition` is not yet broadcast to other players, only to yourself.
-      if ('condition' in p) this.sawConditionLeak = true;
+    }
+    // Condition is deliberately PUBLIC evidence (unlike role) — everyone should see everyone's
+    // condition once a game is underway, and it should always be a valid, alive-consistent value.
+    if (s.phase !== 'lobby') {
+      for (const p of s.players) {
+        if (p.condition == null || !CONDITIONS.includes(p.condition)) this.badPublicCondition = true;
+        if ((p.condition === 'dead') !== !p.alive) this.badPublicCondition = true;
+      }
     }
     // My own condition should always be present, valid, and in sync with `alive`.
     if (s.you.condition != null) {
@@ -136,23 +142,15 @@ function testCluePipeline() {
   console.log('clue pipeline unit test passed:', counts);
 }
 
-function testAttackOutcomes() {
-  const healthy = { condition: 'good' }, hurt = { condition: 'mediocre' }, dying = { condition: 'critical' };
-  const tally = (target, n, opts) => { const c = {}; for (let i = 0; i < n; i++) { const t = rollAttackOutcome(target, opts); assert.ok(OUTCOME_ORDER.includes(t)); c[t] = (c[t] || 0) + 1; } return c; };
-  const healthyOut = tally(healthy, 3000, {});
-  const hurtOut = tally(hurt, 3000, {});
-  const dyingOut = tally(dying, 3000, {});
-  assert.ok((hurtOut.dead || 0) > (healthyOut.dead || 0), 'an already-wounded target should be more likely to die from a fresh attack');
-  assert.ok((dyingOut.dead || 0) > (hurtOut.dead || 0), 'a critical target should be even more likely to die than a merely wounded one');
-  const strongOut = tally(healthy, 3000, { strong: true });
-  assert.ok((strongOut.fail || 0) === 0, 'a resolved delayed (strong) attack should never simply fail');
-  assert.ok((strongOut.dead || 0) > (healthyOut.dead || 0), 'a strong attack should be deadlier than a normal one');
-  // softenOutcome always moves exactly one step toward surviving, and 'fail' has nowhere further to go
-  assert.strictEqual(softenOutcome('dead'), 'critical');
-  assert.strictEqual(softenOutcome('critical'), 'mediocre');
-  assert.strictEqual(softenOutcome('mediocre'), 'fail');
-  assert.strictEqual(softenOutcome('fail'), 'fail');
-  console.log('attack outcome unit test passed:', { healthyOut, hurtOut, dyingOut, strongOut });
+function testConditionProgression() {
+  assert.strictEqual(worsen('good', 1), 'mediocre');
+  assert.strictEqual(worsen('mediocre', 1), 'critical');
+  assert.strictEqual(worsen('critical', 1), 'dead');
+  assert.strictEqual(worsen('good', 2), 'critical', 'a resolved delayed (2-point) attack should skip straight past mediocre');
+  assert.strictEqual(worsen('good', 0), 'good', 'zero hostile hits must never move the condition');
+  assert.strictEqual(worsen('dead', 1), 'dead', 'dead has nowhere further to go');
+  assert.strictEqual(worsen('critical', 5), 'dead', 'any overkill still just clamps at dead, never throws');
+  console.log('condition progression unit test passed');
 }
 
 function testMafiaActionAvailability() {
@@ -196,19 +194,72 @@ function testVigilanteHoldKeepsBullet() {
   console.log('vigilante-hold unit test passed');
 }
 
-function testHealOnlyCountsWhenItChangesOutcome() {
-  const orig = Math.random;
-  try {
-    Math.random = () => 0.999;   // pickWeighted always lands on the last tier ('fail') with this
+function testDoctorBlocksExactlyOneHostileAttack() {
+  // Single attacker, Doctor protects the target: fully blocked, condition unchanged.
+  {
     const mafiaP = fp('m1', 'mafia'), doc = fp('d1', 'doctor'), target = fp('x1', 'villager');
     const room = fakeRoom([mafiaP, doc, target]);
     room.picks[mafiaP.id] = { action: 'attack', target: target.id };
     room.picks[doc.id] = target.id;
     resolveNightForTest(room);
-    assert.strictEqual(target.condition, 'good', 'a roll that would fail anyway should still just fail once healed');
-    assert.ok(!room.dawn.saves.includes(target.id), 'healing a target whose attack would have failed anyway must not be credited as a "save"');
-  } finally { Math.random = orig; }
-  console.log('heal-accuracy unit test passed');
+    assert.strictEqual(target.condition, 'good', 'a single blocked attack must leave the target fully unchanged');
+    assert.strictEqual(room.dawn.deaths.length, 0);
+  }
+  // Single attacker, no Doctor: the hit lands, deterministically, every time.
+  {
+    const mafiaP = fp('m1', 'mafia'), target = fp('x1', 'villager');
+    const room = fakeRoom([mafiaP, target]);
+    room.picks[mafiaP.id] = { action: 'attack', target: target.id };
+    resolveNightForTest(room);
+    assert.strictEqual(target.condition, 'mediocre', 'an unblocked attack must always cost exactly one condition level');
+  }
+  // Two different attackers (Mafia + Serial Killer) on the SAME target, Doctor protects them:
+  // the Doctor blocks ONE of the two attacks, not both — net is one level of deterioration, not zero.
+  {
+    const mafiaP = fp('m1', 'mafia'), skP = fp('s1', 'serialkiller'), doc = fp('d1', 'doctor'), target = fp('x1', 'villager');
+    const room = fakeRoom([mafiaP, skP, doc, target]);
+    room.picks[mafiaP.id] = { action: 'attack', target: target.id };
+    room.picks[skP.id] = target.id;
+    room.picks[doc.id] = target.id;
+    resolveNightForTest(room);
+    assert.strictEqual(target.condition, 'mediocre', 'Doctor blocking one of two simultaneous attacks should still let the other land');
+  }
+  console.log('doctor-blocks-one-attack unit test passed');
+}
+
+function testSoloMafiaAttackingSerialKillerDies() {
+  // A lone Mafia member attacking the Serial Killer dies, unconditionally; the SK is untouched.
+  {
+    const mafiaP = fp('m1', 'mafia'), sk = fp('s1', 'serialkiller');
+    const room = fakeRoom([mafiaP, sk]);
+    room.picks[mafiaP.id] = { action: 'attack', target: sk.id };
+    resolveNightForTest(room);
+    assert.strictEqual(mafiaP.condition, 'dead', 'a solo Mafia member attacking the SK must die');
+    assert.strictEqual(sk.condition, 'good', 'the SK must take no damage from a lone attacker\'s doomed attempt');
+  }
+  // With two Mafia alive, attacking the SK is just a normal attack: no retaliation.
+  {
+    const m1 = fp('m1', 'mafia'), m2 = fp('m2', 'mafia'), sk = fp('s1', 'serialkiller');
+    const room = fakeRoom([m1, m2, sk]);
+    room.picks[m1.id] = { action: 'attack', target: sk.id };
+    room.picks[m2.id] = { action: 'attack', target: sk.id };
+    resolveNightForTest(room);
+    assert.strictEqual(m1.condition, 'good'); assert.strictEqual(m2.condition, 'good');
+    assert.strictEqual(sk.condition, 'mediocre', 'two Mafia attacking together should land a normal, single-level hit on the SK');
+  }
+  console.log('solo-mafia-vs-serial-killer unit test passed');
+}
+
+function testFrameCreatesVisibleClue() {
+  const m1 = fp('m1', 'mafia'), m2 = fp('m2', 'mafia'), target = fp('x1', 'villager');
+  const room = fakeRoom([m1, m2, target]);
+  room.picks[m1.id] = { action: 'frame', target: target.id };
+  room.picks[m2.id] = { action: 'frame', target: target.id };
+  resolveNightForTest(room);
+  const clue = room.caseFile.entries.find(e => e.type === 'event' && e.category === 'clue' && e.about === target.id);
+  assert.ok(clue, 'Frame must place a real, visible entry in the Case File, not just an invisible bias');
+  assert.ok(room.mafiaFrames.some(f => f.target === target.id), 'Frame must still bias the Detective as before');
+  console.log('frame-creates-visible-clue unit test passed');
 }
 
 function testCooldownTiming() {
@@ -227,27 +278,25 @@ function testCooldownTiming() {
 }
 
 function testCaseFileAutoEntries() {
-  const orig = Math.random;
-  try {
-    Math.random = () => 0;   // pickWeighted always lands on the first weighted key: 'dead' for an attack, 'clear' for its clue
-    const mafiaP = fp('m1', 'mafia'), target = fp('x1', 'villager');
-    const room = fakeRoom([mafiaP, target]);
-    room.picks[mafiaP.id] = { action: 'attack', target: target.id };
-    resolveNightForTest(room);
-    assert.strictEqual(target.condition, 'dead', 'sanity check: the forced roll should have killed the target');
-    const entry = room.caseFile.entries.find(e => e.type === 'event' && e.category === 'death' && e.about === target.id);
-    assert.ok(entry, 'a resolved death must automatically appear in the Case File as a VERIFIED FACT, with no player action needed');
-    assert.ok(typeof entry.text === 'string' && entry.text.length > 0, 'the auto-generated event should carry readable public text');
-  } finally { Math.random = orig; }
+  const mafiaP = fp('m1', 'mafia'), target = fp('x1', 'villager', { condition: 'critical' });   // one hit from death
+  const room = fakeRoom([mafiaP, target]);
+  room.picks[mafiaP.id] = { action: 'attack', target: target.id };
+  resolveNightForTest(room);
+  assert.strictEqual(target.condition, 'dead', 'sanity check: one unblocked hit on a critical target should be lethal, deterministically');
+  const entry = room.caseFile.entries.find(e => e.type === 'event' && e.category === 'death' && e.about === target.id);
+  assert.ok(entry, 'a resolved death must automatically appear in the Case File as a VERIFIED FACT, with no player action needed');
+  assert.ok(typeof entry.text === 'string' && entry.text.length > 0, 'the auto-generated event should carry readable public text');
   console.log('case file auto-entry unit test passed');
 }
 
 async function main() {
   testCluePipeline();
-  testAttackOutcomes();
+  testConditionProgression();
   testMafiaActionAvailability();
   testVigilanteHoldKeepsBullet();
-  testHealOnlyCountsWhenItChangesOutcome();
+  testDoctorBlocksExactlyOneHostileAttack();
+  testSoloMafiaAttackingSerialKillerDies();
+  testFrameCreatesVisibleClue();
   testCooldownTiming();
   testCaseFileAutoEntries();
   await new Promise(r => server.listen(PORT, r));
@@ -371,7 +420,7 @@ async function main() {
     }
   }
   assert.ok(bots.every(b => !b.sawRolesLeak), 'no player ever saw a hidden living role');
-  assert.ok(bots.every(b => !b.sawConditionLeak), 'no player ever saw another player\'s condition (self-only for now)');
+  assert.ok(bots.every(b => !b.badPublicCondition), 'every player\'s publicly-visible condition must be present, valid, and consistent with alive');
   assert.ok(bots.every(b => !b.badCondition), 'every player\'s own condition was valid and matched `alive`');
   assert.ok(bots.every(b => !b.sawRawDetectiveLeak), 'Detective results must never be a raw mafia:boolean, only a Stage-1 result');
   assert.ok(bots.every(b => !b.badDetectiveResult), 'every Detective result was one of the valid Stage-1 outcomes');
@@ -384,7 +433,7 @@ async function main() {
 
   // Over 8 games' worth of night logs, we should see real variety: not just plain kills.
   const blob = allLogText.join(' || ');
-  assert.ok(/\(mediocre\)|\(critical\)/.test(blob), 'expected at least one non-lethal (mediocre/critical) attack outcome across 8 games');
+  assert.ok(/\bmediocre\b|\bcritical\b/.test(blob), 'expected at least one non-lethal (mediocre/critical) attack outcome across 8 games');
   assert.ok(/planted misleading evidence|set something in motion|interfered with tonight|Detective .* investigated/.test(blob), 'expected at least one non-attack Mafia action or a Detective investigation in the logs');
   console.log('night-log variety check passed');
 
