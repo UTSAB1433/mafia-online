@@ -94,23 +94,28 @@ function generateClue(context = {}) {
   return { tier: pickWeighted(weights), kind: context.kind || 'general' };
 }
 
-/* ------------------------------------------------------------------ attack outcomes (Phase 1)
- * A resolved attack lands on one of four tiers instead of an automatic kill. 'fail' leaves the
- * target's condition untouched; the other three write straight onto the condition system above.
- * Doctor protection softens the roll by one tier rather than guaranteeing a save outright.
+/* ------------------------------------------------------------------ attack outcomes (deterministic)
+ * Condition only ever moves one step per unblocked hostile attack: GOOD -> MEDIOCRE -> CRITICAL -> DEAD.
+ * No randomness in the outcome itself — a hostile attack always lands unless a protector blocks it.
+ * A resolved delayed attack counts as 2 hit-points instead of 1 (its whole reason to exist is being
+ * a stronger hit worth waiting for), but a single Doctor block still only cancels 1 point of it.
  */
-const ATTACK_OUTCOME_WEIGHTS = { dead: 0.55, critical: 0.25, mediocre: 0.12, fail: 0.08 };
-const STRONG_ATTACK_OUTCOME_WEIGHTS = { dead: 0.75, critical: 0.20, mediocre: 0.05, fail: 0 };   // resolved delayed attacks
-const OUTCOME_ORDER = ['dead', 'critical', 'mediocre', 'fail'];
-function rollAttackOutcome(target, opts = {}) {
-  const weights = { ...(opts.strong ? STRONG_ATTACK_OUTCOME_WEIGHTS : ATTACK_OUTCOME_WEIGHTS) };
-  if (target.condition === 'mediocre') weights.dead = (weights.dead || 0) + 0.15;   // already hurt = more vulnerable
-  if (target.condition === 'critical') weights.dead = (weights.dead || 0) + 0.35;
-  return pickWeighted(weights);
+const CONDITION_ORDER = ['good', 'mediocre', 'critical', 'dead'];
+function worsen(cond, steps) {
+  const i = CONDITION_ORDER.indexOf(cond);
+  return CONDITION_ORDER[Math.min(CONDITION_ORDER.length - 1, i + Math.max(0, steps))];
 }
-function softenOutcome(tier) {                                   // shift one step toward surviving unharmed
-  const i = OUTCOME_ORDER.indexOf(tier);
-  return OUTCOME_ORDER[Math.min(OUTCOME_ORDER.length - 1, i + 1)];
+// Every hostile actor (Mafia team, Vigilante, Serial Killer) gets a private, outcome-only report
+// about their OWN action — never the cause. "My attack failed" is knowable; "the Doctor did it" isn't.
+function outcomeReportText(kind) {
+  switch (kind) {
+    case 'eliminated': return 'ATTACK SUCCESSFUL — TARGET ELIMINATED';
+    case 'decreased': return 'ATTACK SUCCESSFUL — TARGET CONDITION DECREASED';
+    case 'prevented': return 'ATTACK PREVENTED';
+    case 'intercepted': return 'ATTACK INTERCEPTED';
+    case 'invalid': return 'ACTION FAILED';
+    default: return 'ATTACK FAILED — CAUSE UNKNOWN';
+  }
 }
 // Public wording for a death/critical-injury report, gated by how much the clue pipeline decided to reveal.
 // The victim's name is always public (a body/injury is discovered); the attacker/method is not.
@@ -257,7 +262,7 @@ function view(room, p) {
       const q = room.players.get(id);
       return { id: q.id, name: q.name, gender: q.gender, color: q.color, alive: q.alive, host: q.id === room.hostId,
         connected: q.connected && !q.left, left: q.left, ping: q.ping, stale: q.connected && now() - q.lastSeen > STALE_MS,
-        role: inGame ? visibleRole(room, p, q) : null, ready: room.phase === 'day' ? q.ready : false };
+        role: inGame ? visibleRole(room, p, q) : null, condition: inGame ? q.condition : null, ready: room.phase === 'day' ? q.ready : false };
     }),
     you: { role: p.role, alive: p.alive, condition: p.condition, bullets: p.bullets, det: p.det, action: null },
     channel: chatChannel(room, p), voice: voicePolicy(room, p), caseFile: room.caseFile.entries
@@ -280,7 +285,7 @@ function view(room, p) {
     v.ready = { count: el.filter(q => q.ready).length, need: Math.floor(el.length / 2) + 1 };
   }
   if (room.phase === 'vote') v.vote = { cands: room.voteCands, votes: room.votes, round: room.voteRound };
-  if (room.phase === 'dawn') v.dawn = { deaths: room.dawn.deaths, injured: room.dawn.injured, saves: room.settings.announceSave ? room.dawn.saves : [], notice: room.dawn.notices[p.id] || null };
+  if (room.phase === 'dawn') v.dawn = { deaths: room.dawn.deaths, injured: room.dawn.injured, report: room.dawn.actorReports[p.id] || null };
   if (room.phase === 'result') v.result = room.result;
   if (room.phase === 'over') {
     v.winner = room.winner;
@@ -313,7 +318,7 @@ function composePlan(n, s) {
   if (s.bodyguard && n >= 8) optional.push('bodyguard');
   if (s.vigilante && n >= 8) optional.push('vigilante');
   if (s.jester && n >= 7) optional.push('jester');
-  if (s.serialkiller && n >= 9) optional.push('serialkiller');
+  if (s.serialkiller && n >= 8) optional.push('serialkiller');
   for (const r of optional) if (roles.length < n) roles.push(r);
   while (roles.length < n) roles.push('villager');
   return roles.slice(0, n);
@@ -415,18 +420,18 @@ function resolveNight(room) {
     mafiaChoice = { action, target: target || null };
   }
 
-  const attacks = [];   // { t, src, strong }
+  const attacks = [];   // { t, src, weight, report: 'mafia' | actorPlayerId }
 
   // a delayed attack started on an earlier night resolves on its own schedule, regardless of tonight's choice
   if (room.mafiaCountdown && room.mafiaCountdown.resolvesOnNight === n) {
-    attacks.push({ t: room.mafiaCountdown.target, src: 'The Mafia', strong: true });
+    attacks.push({ t: room.mafiaCountdown.target, src: 'The Mafia', weight: 2, report: 'mafia' });
     notes.push('A delayed Mafia plan came to a head tonight.');
     room.mafiaCountdown = null;
   }
 
   switch (mafiaChoice.action) {
     case 'attack':
-      if (mafiaChoice.target) attacks.push({ t: mafiaChoice.target, src: 'The Mafia', strong: false });
+      if (mafiaChoice.target) attacks.push({ t: mafiaChoice.target, src: 'The Mafia', weight: 1, report: 'mafia' });
       break;
     case 'delayed_attack':
       if (mafiaChoice.target && !room.mafiaCountdown) {
@@ -441,6 +446,10 @@ function resolveNight(room) {
         const tp = P.get(mafiaChoice.target);
         notes.push('The Mafia planted misleading evidence.');
         addChat(room, { ch: 'mafia', text: `You planted misleading evidence pointing at ${tp ? tp.name : 'someone'}.` });
+        // Frame's whole point is a real, visible false clue the table can be misled by — not an
+        // invisible nudge only the Detective's private roll feels. It reads exactly like a genuine
+        // clue; nothing marks it as fabricated.
+        if (tp) addCaseEntry(room, { type: 'event', category: 'clue', night: n, about: tp.id, text: `Something suspicious was noticed near ${tp.name} last night.` });
       }
       break;
     case 'sabotage':
@@ -461,8 +470,8 @@ function resolveNight(room) {
     default: break;   // 'wait' — doing nothing is a legitimate strategic choice
   }
 
-  picks.filter(x => x.kind === 'vigilante').forEach(x => { x.p.bullets = 0; attacks.push({ t: x.raw, src: `Vigilante ${x.p.name}`, strong: false }); });
-  picks.filter(x => x.kind === 'serialkiller').forEach(x => attacks.push({ t: x.raw, src: `Serial Killer ${x.p.name}`, strong: false }));
+  picks.filter(x => x.kind === 'vigilante').forEach(x => { x.p.bullets = 0; attacks.push({ t: x.raw, src: `Vigilante ${x.p.name}`, weight: 1, report: x.p.id }); });
+  picks.filter(x => x.kind === 'serialkiller').forEach(x => attacks.push({ t: x.raw, src: `Serial Killer ${x.p.name}`, weight: 1, report: x.p.id }));
   picks.filter(x => x.kind === 'doctor').forEach(x => notes.push(`Doctor ${x.p.name} treated ${P.get(x.raw)?.name || 'someone'}.`));
   picks.filter(x => x.kind === 'bodyguard').forEach(x => notes.push(`Bodyguard ${x.p.name} guarded ${P.get(x.raw)?.name || 'someone'}.`));
 
@@ -486,39 +495,80 @@ function resolveNight(room) {
     notes.push(`Detective ${x.p.name} investigated ${target.name}.`);
   });
 
+  // ---- Serial Killer self-defense: a LONE Mafia member who attacks the SK dies instead, guaranteed.
+  // With 2+ Mafia still alive, attacking the SK is just a normal attack (no retaliation). This models
+  // "you don't corner a killer alone" without touching anything about the SK's own condition/defenses.
+  const aliveMafiaCount = alive.filter(isM).length;
+  const soloMafia = aliveMafiaCount === 1 ? alive.find(isM) : null;
+  if (soloMafia) {
+    for (let i = attacks.length - 1; i >= 0; i--) {
+      const a = attacks[i]; const t = P.get(a.t);
+      if (a.report === 'mafia' && t && t.role === 'serialkiller' && t.condition !== 'dead') {
+        attacks.splice(i, 1);
+        setCondition(soloMafia, 'dead');
+        attacks.push({ t: soloMafia.id, src: 'an unknown assailant', weight: 1, report: null, forceDead: true });
+        notes.push(`${soloMafia.name} attacked the Serial Killer alone and did not survive it.`);
+      }
+    }
+  }
+
   const healed = new Set(picks.filter(x => x.kind === 'doctor').map(x => x.raw));
   const guards = picks.filter(x => x.kind === 'bodyguard');
-  const deadSet = new Set(), saves = [], notices = {};
-  const deaths = [], injured = [];
+  const deaths = [], injured = [], actorReports = {};
 
-  for (const a of attacks) {
-    const t = P.get(a.t);
-    if (!t || t.condition === 'dead' || deadSet.has(t.id)) continue;
-    const rawTier = rollAttackOutcome(t, { strong: a.strong });
-    const wasHealed = healed.has(t.id);
-    const tier = wasHealed ? softenOutcome(rawTier) : rawTier;
-    const actuallySaved = wasHealed && tier !== rawTier;   // only a "save" if the heal changed the outcome
-    const gd = guards.find(x => x.raw === t.id && !deadSet.has(x.p.id) && x.p.condition !== 'dead');
-    const applyTo = gd ? gd.p : t;
-    if (actuallySaved && !saves.includes(t.id)) {
-      saves.push(t.id); notices[t.id] = { type: 'saved', id: t.id };
-      picks.filter(x => x.kind === 'doctor' && x.raw === t.id).forEach(x => { if (!notices[x.p.id]) notices[x.p.id] = { type: 'patient', id: t.id }; });
+  // ---- resolve hostile attacks, grouped by target: deterministic, no randomness in the outcome ----
+  const byTarget = new Map();
+  for (const a of attacks) { if (!byTarget.has(a.t)) byTarget.set(a.t, []); byTarget.get(a.t).push(a); }
+
+  for (const [targetId, list] of byTarget) {
+    const t = P.get(targetId);
+    if (!t || t.condition === 'dead') { list.forEach(a => reportOutcome(room, actorReports, a, 'invalid')); continue; }
+    if (list[0].forceDead) { setCondition(t, 'dead'); deaths.push({ id: t.id, src: list[0].src }); continue; }   // SK-retaliation death: unconditional
+
+    const gd = guards.find(x => x.raw === targetId && x.p.condition !== 'dead');
+    const totalPoints = list.reduce((s, a) => s + a.weight, 0);
+    const doctorBlock = healed.has(t.id) ? 1 : 0;
+    const afterDoctor = Math.max(0, totalPoints - doctorBlock);
+    const guardIntercept = gd ? Math.min(1, afterDoctor) : 0;   // a guard can intercept at most 1 point per night
+    const netOnTarget = afterDoctor - guardIntercept;
+
+    const before = t.condition;
+    const after = worsen(before, netOnTarget);
+    if (after !== before) setCondition(t, after);
+    if (after === 'dead') deaths.push({ id: t.id, src: list[list.length - 1].src });
+    else if (after !== before) injured.push({ id: t.id, src: list[list.length - 1].src, tier: after });
+
+    if (guardIntercept) {
+      const gBefore = gd.p.condition, gAfter = worsen(gBefore, guardIntercept);
+      if (gAfter !== gBefore) setCondition(gd.p, gAfter);
+      if (gAfter === 'dead') deaths.push({ id: gd.p.id, src: 'a defensive intervention' });
+      else if (gAfter !== gBefore) injured.push({ id: gd.p.id, src: 'a defensive intervention', tier: gAfter });
+      notes.push(`Bodyguard ${gd.p.name} intercepted an attack meant for ${t.name}.`);
     }
-    if (gd) notes.push(`${a.src} attacked ${t.name}. Bodyguard ${gd.p.name} stepped in.`);
-    if (tier === 'fail') { notes.push(`${a.src} attacked ${applyTo.name}, but the attack failed.`); continue; }
-    if (tier === 'dead') { deadSet.add(applyTo.id); setCondition(applyTo, 'dead'); deaths.push({ id: applyTo.id, src: a.src }); }
-    else { setCondition(applyTo, tier); injured.push({ id: applyTo.id, src: a.src, tier }); }
-    notes.push(`${a.src} attacked ${applyTo.name} (${tier}).`);
+
+    // report each attacker's own outcome, in submission order: doctor's single block is consumed by
+    // whichever attack is processed first, and the guard's single intercept by whichever is next —
+    // a simple, deterministic rule rather than randomly picking who gets credited with "the" block.
+    let pointsUsed = 0;
+    list.forEach(a => {
+      const startPoints = pointsUsed; pointsUsed += a.weight;
+      if (startPoints < doctorBlock) return reportOutcome(room, actorReports, a, 'prevented');
+      if (startPoints < doctorBlock + guardIntercept) return reportOutcome(room, actorReports, a, 'intercepted');
+      reportOutcome(room, actorReports, a, after === 'dead' ? 'eliminated' : (after !== before ? 'decreased' : 'invalid'));
+    });
+    notes.push(`${list.map(a => a.src).join(' and ')} targeted ${t.name}: ${before} -> ${after}.`);
   }
   if (!attacks.length) notes.push('Nobody was attacked.');
   notes.forEach(text => room.log.push({ label: `Night ${n}`, text }));
 
-  // ---- public dawn report: how much gets revealed is decided by the clue pipeline, not guaranteed ----
+  // ---- public dawn report: how much gets revealed is decided by the clue pipeline, not guaranteed.
+  // Sabotage forces the vaguest possible wording AND suppresses the role reveal, even with Reveal on —
+  // "interfere with a specific investigation or record" should visibly cost the town something. ----
   const sabotaged = room.sabotageActiveNight === n;
   const deathReports = deaths.map(d => {
     const t = P.get(d.id);
     const c = sabotaged ? { tier: 'none' } : generateClue({ kind: 'attack' });
-    return { id: d.id, role: room.settings.reveal ? t.role : null, note: attackPublicNote(t, 'dead', c.tier, d.src) };
+    return { id: d.id, role: sabotaged ? null : (room.settings.reveal ? t.role : null), note: attackPublicNote(t, 'dead', c.tier, d.src) };
   });
   const injuredReports = injured.filter(x => x.tier === 'critical').map(x => {
     const t = P.get(x.id);
@@ -526,12 +576,21 @@ function resolveNight(room) {
     return { id: x.id, note: attackPublicNote(t, 'critical', c.tier, x.src) };
   });
 
-  room.dawn = { deaths: deathReports, injured: injuredReports, saves, notices };
+  room.dawn = { deaths: deathReports, injured: injuredReports, actorReports };
   // These are already public dawn news, so they enter the Case File automatically as VERIFIED FACT —
-  // unlike a Detective's result or a Doctor's save, which stay private until a player formally claims them.
+  // unlike a Detective's result, which stays private until a player formally claims it.
   deathReports.forEach(d => addCaseEntry(room, { type: 'event', category: 'death', night: n, about: d.id, role: d.role, text: d.note || `${P.get(d.id).name} was found dead.` }));
   injuredReports.forEach(x => addCaseEntry(room, { type: 'event', category: 'injury', night: n, about: x.id, text: x.note || `${P.get(x.id).name} was found badly hurt.` }));
-  setPhase(room, 'dawn', T(Math.min(22, 4.5 + 3.6 * (deathReports.length + injuredReports.length + saves.length))));
+  setPhase(room, 'dawn', T(Math.min(22, 4.5 + 3.6 * (deathReports.length + injuredReports.length))));
+}
+// Delivers a private, outcome-only report to whoever owns an attack: the whole Mafia team (via their
+// existing private channel) or a single Vigilante/Serial Killer actor (who has no channel of their
+// own, so it's queued for them specifically and picked up next state view).
+function reportOutcome(room, actorReports, attack, kind) {
+  if (!attack.report) return;   // e.g. the SK's retaliation kill has no "owner" to report to
+  const text = outcomeReportText(kind);
+  if (attack.report === 'mafia') addChat(room, { ch: 'mafia', text });
+  else actorReports[attack.report] = text;
 }
 function checkWin(room) {
   const al = [...room.players.values()].filter(p => p.alive);
@@ -881,5 +940,5 @@ if (require.main === module) {
   server.listen(PORT, () => console.log(`Mafia online listening on http://localhost:${PORT}`));
 }
 module.exports = { server, rooms, composePlan, autoTeam, maxTeam, generateClue, CLUE_TIERS, CONDITIONS, addCaseEntry,
-  rollAttackOutcome, softenOutcome, mafiaActionsAvailable, MAFIA_ACTIONS, OUTCOME_ORDER, nextCooldownNight,
+  worsen, CONDITION_ORDER, outcomeReportText, mafiaActionsAvailable, MAFIA_ACTIONS, nextCooldownNight,
   FRAME_COOLDOWN_NIGHTS, SABOTAGE_COOLDOWN_NIGHTS, resolveNight };
